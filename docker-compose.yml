@@ -1,0 +1,88 @@
+services:
+  prepare_dataset:
+    profiles: ["prepare"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-challenge-ml:local
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - tfds_cache:/tfds
+    environment:
+      TFDS_DATA_DIR: /tfds
+      WRAPT_DISABLE_EXTENSIONS: "1"
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -lc "python -m ml.prepare_dataset
+      --output_dir ${OUTPUT_DIR:-data/processed}
+      --dataset_name ${DATASET_NAME:-para_crawl/enpt}
+      --max_tokens ${MAX_TOKENS:-64}
+      --train_records ${TRAIN_RECORDS:-5000}
+      --val_records ${VAL_RECORDS:-500}
+      --seed ${SEED:-42}"
+
+  train:
+    profiles: ["train"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-challenge-ml:local
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - tfds_cache:/tfds
+    environment:
+      TFDS_DATA_DIR: /tfds
+      WRAPT_DISABLE_EXTENSIONS: "1"
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -lc "python -m ml.train
+      --data_dir ${OUTPUT_DIR:-data/processed}
+      --artifacts_dir ${ARTIFACTS_DIR:-artifacts}
+      --epochs ${EPOCHS:-30}
+      --batch_size ${BATCH_SIZE:-32}
+      --threshold ${THRESHOLD:-0.30}
+      --max_tokens ${MAX_TOKENS:-64}
+      --git_sha ${GIT_SHA:-unknown}"
+
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-challenge-ml:local
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    environment:
+      WRAPT_DISABLE_EXTENSIONS: "1"
+      PYTHONUNBUFFERED: "1"
+      ARTIFACTS_DIR: /workspace/${ARTIFACTS_DIR:-artifacts}
+      DEFAULT_RUN_ID: ${DEFAULT_RUN_ID:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command: >
+      bash -lc "uvicorn inference_api.main:app --host 0.0.0.0 --port 8000"
+
+  tests:
+    profiles: ["tests"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-challenge-ml:local
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    environment:
+      WRAPT_DISABLE_EXTENSIONS: "1"
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -lc "pytest -q"
+
+volumes:
+  tfds_cache:
