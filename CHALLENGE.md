@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Construir um fluxo **end-to-end** que automatize todo o ciclo de vida do modelo de tradução PT → EN fornecido neste repositório, desde a preparação de dados até o deploy em produção.
+Construir um fluxo **end-to-end** que automatize todo o ciclo de vida do modelo de tradução EN → PT fornecido neste repositório, desde a preparação de dados até o deploy em produção.
 
 As **rotinas base já estão implementadas** (preparação de dados, treinamento, API de inferência) e deve criar a **infraestrutura de automação, orquestração e observabilidade** ao redor delas.
 

@@ -139,14 +139,14 @@ docker compose --profile tests up
 
 ## 📡 Endpoints da API
 
-| Método | Rota | Descrição |
-|---|---|---|
-| `GET` | `/health` | Health check — status, `run_id` e `model_loaded` |
-| `GET` | `/model` | Retorna o `run_id` do modelo ativo |
+| Método | Rota | Descrição                                                          |
+|---|---|--------------------------------------------------------------------|
+| `GET` | `/health` | Health check — status, `run_id` e `model_loaded`                   |
+| `GET` | `/model` | Retorna o `run_id` do modelo ativo                                 |
 | `GET` | `/metrics` | Contadores: `requests_total`, `errors_total`, `translations_total` |
-| `POST` | `/predict` | Traduz texto PT → EN |
-| `POST` | `/reload` | Hot-reload de modelo por `run_id` ou `artifacts_dir` |
-| `GET` | `/docs` | Documentação interativa (Swagger UI) |
+| `POST` | `/predict` | Traduz texto EN → PT                                               |
+| `POST` | `/reload` | Hot-reload de modelo por `run_id` ou `artifacts_dir`               |
+| `GET` | `/docs` | Documentação interativa (Swagger UI)                               |
 
 ### Exemplo — `/predict`
 
