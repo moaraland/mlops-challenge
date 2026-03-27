@@ -22,7 +22,6 @@ from inference_api.schemas import (
     ReloadResponse,
 )
 
-
 setup_logging()
 
 logger = logging.getLogger(__name__)
@@ -97,7 +96,7 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     Returns:
         JSONResponse com status 500 e detalhe do erro.
     """
-   
+
     if isinstance(exc, HTTPException):
         raise exc
 
@@ -155,7 +154,7 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         ReloadResponse com status e run_id do modelo recém-carregado.
     """
     try:
-      
+
         effective_dir = req.artifacts_dir or str(manager.artifacts_dir)
         target_manager = (
             ModelManager(
@@ -166,7 +165,6 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         )
         rid = target_manager.load(run_id=req.run_id or None)
 
-        
         if req.artifacts_dir:
             with manager._lock:
                 manager._translator = target_manager._translator
@@ -176,7 +174,7 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         return ReloadResponse(status="reloaded", run_id=rid)
     except Exception as exc:
         logger.exception("Falha ao recarregar o modelo via /reload")
-        
+
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
@@ -198,12 +196,12 @@ def predict(req: PredictRequest) -> PredictResponse:
     except FileNotFoundError as exc:
         metrics.increment_errors()
         logger.warning("Modelo indisponível durante /predict: %s", exc)
-       
+
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         metrics.increment_errors()
         logger.exception("Erro inesperado durante /predict")
-    
+
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     latency_ms = (time.monotonic() - start) * 1000
