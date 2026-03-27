@@ -2,10 +2,10 @@ from fastapi.testclient import TestClient
 
 from inference_api.main import app
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
 
 def _client() -> TestClient:
     """Cria um TestClient sem acionar o lifespan (model load)."""
@@ -15,6 +15,7 @@ def _client() -> TestClient:
 # ---------------------------------------------------------------------------
 # /health
 # ---------------------------------------------------------------------------
+
 
 def test_health_endpoint():
     """GET /health deve retornar 200 com campo status='ok'."""
@@ -39,6 +40,7 @@ def test_health_has_model_loaded_field():
 # ---------------------------------------------------------------------------
 # /predict
 # ---------------------------------------------------------------------------
+
 
 def test_predict_without_model_returns_503_or_500():
     """POST /predict sem modelo carregado deve retornar 503 ou 500."""
@@ -73,6 +75,7 @@ def test_predict_missing_text_field_returns_422():
 # /metrics
 # ---------------------------------------------------------------------------
 
+
 def test_metrics_endpoint_returns_counters():
     """GET /metrics deve retornar os três contadores esperados."""
     client = TestClient(app)
@@ -103,6 +106,7 @@ def test_metrics_increments_on_predict():
 # ---------------------------------------------------------------------------
 # /model
 # ---------------------------------------------------------------------------
+
 
 def test_model_endpoint_returns_run_id():
     """GET /model deve retornar o campo run_id."""

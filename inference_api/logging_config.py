@@ -88,4 +88,3 @@ def setup_logging(level: int = logging.INFO) -> None:
     else:
         root_logger.handlers.clear()
         root_logger.addHandler(handler)
-

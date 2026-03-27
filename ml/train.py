@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import os
+
 os.environ.setdefault("WRAPT_DISABLE_EXTENSIONS", "1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
@@ -15,7 +17,15 @@ try:
 except Exception:
     pass
 
-from ml.common import PreparedDatasetInfo, ensure_dir, generate_run_id, read_json, sha256_file, utc_now_iso, write_json
+from ml.common import (
+    PreparedDatasetInfo,
+    ensure_dir,
+    generate_run_id,
+    read_json,
+    sha256_file,
+    utc_now_iso,
+    write_json,
+)
 from ml.model import Transformer, TransformerConfig, WarmupSchedule
 
 
@@ -39,8 +49,8 @@ def build_training_dataset(
 ) -> tf.data.Dataset:
     tfrecord_path = str(tfrecord_path)
     ds = tf.data.TFRecordDataset(
-            [tfrecord_path],
-            buffer_size=8 * 1024 * 1024,  # 8MB (ajuste conforme disco/rede)
+        [tfrecord_path],
+        buffer_size=8 * 1024 * 1024,  # 8MB (ajuste conforme disco/rede)
     ).map(_parse_example, num_parallel_calls=tf.data.AUTOTUNE)
 
     def trim_and_shift(pt, en):
@@ -57,21 +67,29 @@ def build_training_dataset(
 
     ds = ds.padded_batch(
         batch_size,
-        padded_shapes=((
+        padded_shapes=(
+            (
+                [max_tokens],
+                [max_tokens],
+            ),
             [max_tokens],
-            [max_tokens],
-        ), [max_tokens]),
-        padding_values=((
+        ),
+        padding_values=(
+            (
+                tf.constant(0, tf.int64),
+                tf.constant(0, tf.int64),
+            ),
             tf.constant(0, tf.int64),
-            tf.constant(0, tf.int64),
-        ), tf.constant(0, tf.int64)),
+        ),
         drop_remainder=True,
     )
     return ds.prefetch(tf.data.AUTOTUNE)
 
 
 def masked_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
-    loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction="none")
+    loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
+        from_logits=True, reduction="none"
+    )
     loss = loss_fn(y_true, y_pred)
     mask = tf.cast(tf.not_equal(y_true, 0), tf.float32)
     return tf.reduce_sum(loss * mask) / tf.reduce_sum(mask)
@@ -95,7 +113,9 @@ class Translator(tf.Module):
         if len(sentence.shape) == 0:
             sentence = sentence[tf.newaxis]
 
-        encoder_input = self.tokenizers.pt.tokenize(sentence)[:, : self.max_tokens].to_tensor()
+        encoder_input = self.tokenizers.pt.tokenize(sentence)[
+            :, : self.max_tokens
+        ].to_tensor()
 
         start_end = self.tokenizers.en.tokenize([""])[0]
         start = start_end[0][tf.newaxis]
@@ -135,14 +155,30 @@ def load_prepared_info(data_dir: Path) -> PreparedDatasetInfo:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", required=True, help="Diretório gerado por prepare_dataset")
-    parser.add_argument("--artifacts_dir", required=True, help="Diretório base de artefatos versionados")
-    parser.add_argument("--run_id", default="", help="Opcional: run_id. Se vazio, gera automaticamente")
-    parser.add_argument("--git_sha", default="unknown", help="Sha do git (pode ser passado pelo CI/CD)")
-    parser.add_argument("--threshold", type=float, default=0.30, help="Gate: token_accuracy mínima")
-    parser.add_argument("--epochs", type=int, default=10, help="Épocas de treino (padrão reduzido)")
-    parser.add_argument("--batch_size", type=int, default=32, help="Tamanho do batch (padrão reduzido)")
-    parser.add_argument("--max_tokens", type=int, default=64, help="Deve bater com o prepare_dataset")
+    parser.add_argument(
+        "--data_dir", required=True, help="Diretório gerado por prepare_dataset"
+    )
+    parser.add_argument(
+        "--artifacts_dir", required=True, help="Diretório base de artefatos versionados"
+    )
+    parser.add_argument(
+        "--run_id", default="", help="Opcional: run_id. Se vazio, gera automaticamente"
+    )
+    parser.add_argument(
+        "--git_sha", default="unknown", help="Sha do git (pode ser passado pelo CI/CD)"
+    )
+    parser.add_argument(
+        "--threshold", type=float, default=0.30, help="Gate: token_accuracy mínima"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=10, help="Épocas de treino (padrão reduzido)"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=32, help="Tamanho do batch (padrão reduzido)"
+    )
+    parser.add_argument(
+        "--max_tokens", type=int, default=64, help="Deve bater com o prepare_dataset"
+    )
     parser.add_argument("--num_layers", type=int, default=4)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--num_heads", type=int, default=4)
@@ -160,12 +196,33 @@ def main() -> None:
     ckpt_dir = ensure_dir(run_dir / "checkpoints")
 
     tokenizers_root = data_dir / "tokenizers"
-    tokenizers = tf.saved_model.load(str(tokenizers_root / "ted_hrlr_translate_pt_en_converter_extracted/ted_hrlr_translate_pt_en_converter"))
+    tokenizers = tf.saved_model.load(
+        str(
+            tokenizers_root
+            / "ted_hrlr_translate_pt_en_converter_extracted/ted_hrlr_translate_pt_en_converter"
+        )
+    )
 
-    train_ds = build_training_dataset(data_dir / "train.tfrecord", args.batch_size, args.max_tokens, shuffle=True, seed=42)
-    val_ds = build_training_dataset(data_dir / "val.tfrecord", args.batch_size, args.max_tokens, shuffle=False, seed=42)
-    steps_per_epoch = max(1, (prepared.train_records + args.batch_size - 1) // args.batch_size)
-    validation_steps = max(1, (prepared.val_records + args.batch_size - 1) // args.batch_size)
+    train_ds = build_training_dataset(
+        data_dir / "train.tfrecord",
+        args.batch_size,
+        args.max_tokens,
+        shuffle=True,
+        seed=42,
+    )
+    val_ds = build_training_dataset(
+        data_dir / "val.tfrecord",
+        args.batch_size,
+        args.max_tokens,
+        shuffle=False,
+        seed=42,
+    )
+    steps_per_epoch = max(
+        1, (prepared.train_records + args.batch_size - 1) // args.batch_size
+    )
+    validation_steps = max(
+        1, (prepared.val_records + args.batch_size - 1) // args.batch_size
+    )
 
     train_ds = train_ds.repeat()
     val_ds_fit = val_ds.repeat()
@@ -195,9 +252,9 @@ def main() -> None:
         validation_steps=validation_steps,
         callbacks=[
             tf.keras.callbacks.ModelCheckpoint(
-                    filepath=str(ckpt_dir / "ckpt.weights.h5"),
-                    save_weights_only=True,
-                    save_best_only=False,
+                filepath=str(ckpt_dir / "ckpt.weights.h5"),
+                save_weights_only=True,
+                save_best_only=False,
             )
         ],
     )

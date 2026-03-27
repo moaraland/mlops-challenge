@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import os
+
 os.environ.setdefault("WRAPT_DISABLE_EXTENSIONS", "1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
@@ -12,8 +14,10 @@ import tensorflow as tf
 def _positional_encoding(length: int, depth: int) -> tf.Tensor:
     depth = depth // 2
     positions = tf.range(length)[:, tf.newaxis]
-    depths = tf.range(depth, dtype=tf.float32)[tf.newaxis, :] / tf.cast(depth, tf.float32)
-    angle_rates = 1.0 / (10000 ** depths)
+    depths = tf.range(depth, dtype=tf.float32)[tf.newaxis, :] / tf.cast(
+        depth, tf.float32
+    )
+    angle_rates = 1.0 / (10000**depths)
     angle_rads = tf.cast(positions, tf.float32) * angle_rates
     pos_encoding = tf.concat([tf.sin(angle_rads), tf.cos(angle_rads)], axis=-1)
     return pos_encoding[tf.newaxis, :, :]
@@ -47,23 +51,29 @@ def _causal_mask(length: tf.Tensor) -> tf.Tensor:
 
 
 class EncoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model: int, num_heads: int, dff: int, dropout: float, **kwargs):
+    def __init__(
+        self, d_model: int, num_heads: int, dff: int, dropout: float, **kwargs
+    ):
         super().__init__(**kwargs)
         self.mha = tf.keras.layers.MultiHeadAttention(
             num_heads=num_heads,
             key_dim=d_model // num_heads,
             dropout=dropout,
         )
-        self.ffn = tf.keras.Sequential([
-            tf.keras.layers.Dense(dff, activation="relu"),
-            tf.keras.layers.Dense(d_model),
-        ])
+        self.ffn = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(dff, activation="relu"),
+                tf.keras.layers.Dense(d_model),
+            ]
+        )
         self.norm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.norm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.drop1 = tf.keras.layers.Dropout(dropout)
         self.drop2 = tf.keras.layers.Dropout(dropout)
 
-    def call(self, x: tf.Tensor, training: bool, mask: Optional[tf.Tensor]) -> tf.Tensor:
+    def call(
+        self, x: tf.Tensor, training: bool, mask: Optional[tf.Tensor]
+    ) -> tf.Tensor:
         attn = self.mha(x, x, x, attention_mask=mask, training=training)
         x = self.norm1(x + self.drop1(attn, training=training))
         ffn = self.ffn(x, training=training)
@@ -72,7 +82,9 @@ class EncoderLayer(tf.keras.layers.Layer):
 
 
 class DecoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model: int, num_heads: int, dff: int, dropout: float, **kwargs):
+    def __init__(
+        self, d_model: int, num_heads: int, dff: int, dropout: float, **kwargs
+    ):
         super().__init__(**kwargs)
         self.self_mha = tf.keras.layers.MultiHeadAttention(
             num_heads=num_heads,
@@ -84,10 +96,12 @@ class DecoderLayer(tf.keras.layers.Layer):
             key_dim=d_model // num_heads,
             dropout=dropout,
         )
-        self.ffn = tf.keras.Sequential([
-            tf.keras.layers.Dense(dff, activation="relu"),
-            tf.keras.layers.Dense(d_model),
-        ])
+        self.ffn = tf.keras.Sequential(
+            [
+                tf.keras.layers.Dense(dff, activation="relu"),
+                tf.keras.layers.Dense(d_model),
+            ]
+        )
         self.norm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.norm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
         self.norm3 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
@@ -106,7 +120,9 @@ class DecoderLayer(tf.keras.layers.Layer):
         attn1 = self.self_mha(x, x, x, attention_mask=self_mask, training=training)
         x = self.norm1(x + self.drop1(attn1, training=training))
 
-        attn2 = self.cross_mha(x, enc_out, enc_out, attention_mask=cross_mask, training=training)
+        attn2 = self.cross_mha(
+            x, enc_out, enc_out, attention_mask=cross_mask, training=training
+        )
         x = self.norm2(x + self.drop2(attn2, training=training))
 
         ffn = self.ffn(x, training=training)
@@ -130,15 +146,23 @@ class Transformer(tf.keras.Model):
     def __init__(self, cfg: TransformerConfig, **kwargs):
         super().__init__(**kwargs)
         self.cfg = cfg
-        self.pt_embed = PositionalEmbedding(cfg.pt_vocab_size, cfg.d_model, cfg.max_tokens, name="pt_embed")
-        self.en_embed = PositionalEmbedding(cfg.en_vocab_size, cfg.d_model, cfg.max_tokens, name="en_embed")
+        self.pt_embed = PositionalEmbedding(
+            cfg.pt_vocab_size, cfg.d_model, cfg.max_tokens, name="pt_embed"
+        )
+        self.en_embed = PositionalEmbedding(
+            cfg.en_vocab_size, cfg.d_model, cfg.max_tokens, name="en_embed"
+        )
 
         self.enc_layers = [
-            EncoderLayer(cfg.d_model, cfg.num_heads, cfg.dff, cfg.dropout, name=f"enc_{i}")
+            EncoderLayer(
+                cfg.d_model, cfg.num_heads, cfg.dff, cfg.dropout, name=f"enc_{i}"
+            )
             for i in range(cfg.num_layers)
         ]
         self.dec_layers = [
-            DecoderLayer(cfg.d_model, cfg.num_heads, cfg.dff, cfg.dropout, name=f"dec_{i}")
+            DecoderLayer(
+                cfg.d_model, cfg.num_heads, cfg.dff, cfg.dropout, name=f"dec_{i}"
+            )
             for i in range(cfg.num_layers)
         ]
 
@@ -158,12 +182,20 @@ class Transformer(tf.keras.Model):
 
         L = tf.shape(en_in)[1]
         causal = _causal_mask(L)
-        self_attn_mask = tf.logical_and(causal[tf.newaxis, :, :], en_mask[:, tf.newaxis, :])
+        self_attn_mask = tf.logical_and(
+            causal[tf.newaxis, :, :], en_mask[:, tf.newaxis, :]
+        )
         cross_mask = pt_mask[:, tf.newaxis, :]
 
         y = self.en_embed(en_in)
         for layer in self.dec_layers:
-            y = layer(y, enc_out, training=training, self_mask=self_attn_mask, cross_mask=cross_mask)
+            y = layer(
+                y,
+                enc_out,
+                training=training,
+                self_mask=self_attn_mask,
+                cross_mask=cross_mask,
+            )
 
         return self.final_dense(y)
 
@@ -177,5 +209,5 @@ class WarmupSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     def __call__(self, step: tf.Tensor) -> tf.Tensor:
         step = tf.cast(step, tf.float32)
         arg1 = tf.math.rsqrt(step)
-        arg2 = step * (self.warmup_steps ** -1.5)
+        arg2 = step * (self.warmup_steps**-1.5)
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)

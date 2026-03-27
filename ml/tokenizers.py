@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 import os
+
 os.environ.setdefault("WRAPT_DISABLE_EXTENSIONS", "1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
@@ -9,7 +11,6 @@ from typing import Tuple
 import tensorflow as tf
 
 try:
-    import tensorflow_text  # registra ops necessárias do TF Text
     _TF_TEXT_OK = True
 except Exception:
     _TF_TEXT_OK = False
@@ -30,7 +31,9 @@ def _require_tf_text() -> None:
         )
 
 
-def download_and_load_tokenizers(base_dir: str | Path) -> tf.types.experimental.Trackable:
+def download_and_load_tokenizers(
+    base_dir: str | Path,
+) -> tf.types.experimental.Trackable:
     """
     Baixa e extrai o SavedModel de tokenizers dentro de `base_dir` e retorna
     o objeto carregado via `tf.saved_model.load`.

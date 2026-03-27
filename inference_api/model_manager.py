@@ -36,7 +36,7 @@ class ModelManager:
             artifacts_dir: Diretório raiz dos artefatos.
             default_run_id: run_id padrão a carregar.
         """
-        self.artifacts_dir = Path(artifacts_dir.strip('/'))
+        self.artifacts_dir = Path(artifacts_dir.strip("/"))
         self.default_run_id = default_run_id.strip()
         self._lock = threading.Lock()
         self._translator = None

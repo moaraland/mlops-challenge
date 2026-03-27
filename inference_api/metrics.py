@@ -51,4 +51,3 @@ class AppMetrics:
 
 # Instância singleton compartilhada pela aplicação
 metrics = AppMetrics()
-

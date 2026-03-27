@@ -45,7 +45,9 @@ def sha256_file(path: str | Path) -> str:
 
 def generate_run_id(prefix: str = "run") -> str:
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    rand = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+    rand = "".join(
+        random.choice(string.ascii_lowercase + string.digits) for _ in range(6)
+    )
     return f"{prefix}_{ts}_{rand}"
 
 

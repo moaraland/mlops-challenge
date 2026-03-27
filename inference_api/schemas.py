@@ -10,7 +10,9 @@ class PredictRequest(BaseModel):
         text: Texto em português a ser traduzido (entre 1 e 512 caracteres).
     """
 
-    text: str = Field(..., min_length=1, max_length=512, description="Entrada em português")
+    text: str = Field(
+        ..., min_length=1, max_length=512, description="Entrada em português"
+    )
 
 
 class PredictResponse(BaseModel):
@@ -24,7 +26,9 @@ class PredictResponse(BaseModel):
 
     translation: str
     run_id: str
-    latency_ms: float = Field(..., description="Latência da inferência em milissegundos")
+    latency_ms: float = Field(
+        ..., description="Latência da inferência em milissegundos"
+    )
 
 
 class HealthResponse(BaseModel):
@@ -62,7 +66,9 @@ class MetricsResponse(BaseModel):
 
     requests_total: int = Field(..., description="Total de requisições recebidas.")
     errors_total: int = Field(..., description="Total de erros retornados.")
-    translations_total: int = Field(..., description="Total de traduções bem-sucedidas.")
+    translations_total: int = Field(
+        ..., description="Total de traduções bem-sucedidas."
+    )
 
 
 class ReloadRequest(BaseModel):
@@ -81,7 +87,7 @@ class ReloadRequest(BaseModel):
         description="run_id do modelo a carregar.",
     )
     artifacts_dir: str | None = Field(
-        default='/artifacts',
+        default="/artifacts",
         description="Diretório alternativo de artefatos (ex.: '/artifacts').",
     )
 
@@ -89,7 +95,7 @@ class ReloadRequest(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
         if self.artifacts_dir:
-            self.artifacts_dir = self.artifacts_dir.rstrip('/')
+            self.artifacts_dir = self.artifacts_dir.rstrip("/")
 
 
 class ReloadResponse(BaseModel):
