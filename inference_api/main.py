@@ -18,8 +18,8 @@ from inference_api.schemas import (
     ModelResponse,
     PredictRequest,
     PredictResponse,
-    ReloadResponse,
     ReloadRequest,
+    ReloadResponse,
 )
 
 # Inicializa o logging antes de qualquer uso
