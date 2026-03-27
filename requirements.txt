@@ -6,3 +6,4 @@ uvicorn[standard]>=0.41.0
 pytest>=9.0.2
 httpx>=0.28.1
 wrapt==2.1.1
+importlib-resources

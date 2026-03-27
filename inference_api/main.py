@@ -18,8 +18,8 @@ from inference_api.schemas import (
     ModelResponse,
     PredictRequest,
     PredictResponse,
-    ReloadRequest,
     ReloadResponse,
+    ReloadRequest,
 )
 
 # Inicializa o logging antes de qualquer uso
@@ -66,7 +66,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rid = manager.load()
         logger.info("Modelo carregado na inicialização: run_id=%s", rid)
     except Exception:
-        logger.warning("Não foi possível carregar o modelo na inicialização; será tentado na primeira requisição.")
+        logger.warning(
+            "Não foi possível carregar o modelo na inicialização; será tentado na primeira requisição."
+        )
 
     yield
 
@@ -99,7 +101,9 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     if isinstance(exc, HTTPException):
         raise exc
 
-    logger.exception("Erro interno não tratado em %s %s", request.method, request.url.path)
+    logger.exception(
+        "Erro interno não tratado em %s %s", request.method, request.url.path
+    )
     return JSONResponse(
         status_code=500,
         content={"detail": "Erro interno do servidor."},
@@ -144,24 +148,19 @@ def get_metrics() -> MetricsResponse:
 def reload_model(req: ReloadRequest) -> ReloadResponse:
     """Recarrega o modelo a partir do run_id e artifacts_dir fornecidos ou configurados.
 
-    Quando ``run_id`` é enviado, esse modelo é carregado diretamente.
-    Quando ``artifacts_dir`` é enviado, busca o modelo nesse diretório alternativo.
-    Sem body, utiliza os valores configurados nas variáveis de ambiente.
-
     Args:
         req: Corpo opcional com ``run_id`` e/ou ``artifacts_dir``.
 
     Returns:
         ReloadResponse com status e run_id do modelo recém-carregado.
-
-    Raises:
-        HTTPException: 500 se ocorrer qualquer erro durante a recarga.
     """
     try:
         # Determina o artifacts_dir efetivo para esta operação
         effective_dir = req.artifacts_dir or str(manager.artifacts_dir)
         target_manager = (
-            ModelManager(artifacts_dir=effective_dir, default_run_id=manager.default_run_id)
+            ModelManager(
+                artifacts_dir=effective_dir, default_run_id=manager.default_run_id
+            )
             if req.artifacts_dir
             else manager
         )
@@ -177,7 +176,8 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         return ReloadResponse(status="reloaded", run_id=rid)
     except Exception as exc:
         logger.exception("Falha ao recarregar o modelo via /reload")
-        raise HTTPException(status_code=500, detail=str(exc))
+        # Correção B904: adicionado 'from exc'
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -189,9 +189,6 @@ def predict(req: PredictRequest) -> PredictResponse:
 
     Returns:
         PredictResponse com a tradução, run_id e latência em ms.
-
-    Raises:
-        HTTPException: 503 se o modelo não estiver disponível; 500 para outros erros.
     """
     metrics.increment_requests()
     start = time.monotonic()
@@ -201,11 +198,13 @@ def predict(req: PredictRequest) -> PredictResponse:
     except FileNotFoundError as exc:
         metrics.increment_errors()
         logger.warning("Modelo indisponível durante /predict: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+        # Correção B904: adicionado 'from exc'
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         metrics.increment_errors()
         logger.exception("Erro inesperado durante /predict")
-        raise HTTPException(status_code=500, detail=str(exc))
+        # Correção B904: adicionado 'from exc'
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     latency_ms = (time.monotonic() - start) * 1000
     metrics.increment_translations()
