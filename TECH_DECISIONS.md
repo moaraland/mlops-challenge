@@ -360,6 +360,133 @@ Arquivos impactados:
 
 ---
 
+## Decisão 10 — `TransformerConfig` deve nomear campos pela posição na arquitetura, não pelo idioma
+
+**Antes**
+
+- Os campos eram `pt_vocab_size` e `en_vocab_size`.
+- O código do modelo estava acoplado ao par de idiomas EN→PT.
+- Renomear para outro par de idiomas exigiria mudanças em toda a configuração.
+
+**Decisão**
+
+- Renomear para `encoder_vocab_size` e `decoder_vocab_size`.
+- O modelo Transformer descreve papéis arquiteturais, não idiomas.
+
+**Motivo**
+
+- Nomes acoplados a idiomas violam o princípio de separação de responsabilidades.
+- O `TransformerConfig` deve descrever a arquitetura. A escolha de idioma é responsabilidade do pipeline de dados.
+
+**Impacto**
+
+- Remove acoplamento desnecessário
+- Facilita reuso do modelo para outros pares de idiomas
+- Melhora legibilidade do código de treino
+
+**Status**
+
+- `implementado`
+
+Arquivos impactados:
+
+- `ml/model.py`
+- `ml/train.py`
+
+---
+
+## Decisão 11 — `AppMetrics` deve ter uma única fonte de verdade para os contadores
+
+**Antes**
+
+- A classe mantinha variáveis inteiras Python (`_req_count`, `_err_count`, `_trans_count`) incrementadas manualmente em paralelo aos `Counter` do `prometheus_client`.
+- Havia também um `threading.Lock` manual, redundante porque o `prometheus_client` é thread-safe internamente.
+- Os `Counter` tinham nomes terminados em `_total`, o que fazia o `prometheus_client` gerar amostras com nomes duplicados como `requests_total_total`.
+
+**Decisão**
+
+- Remover as variáveis Python redundantes.
+- O `prometheus_client` passa a ser a única fonte de verdade.
+- `to_dict()` lê via `registry.get_sample_value()`, que é a API pública correta.
+- `Counter` criados sem sufixo `_total` nos nomes.
+- `threading.Lock` removido.
+
+**Motivo**
+
+- Rastreamento duplo de estado viola DRY e cria risco de divergência silenciosa.
+- Lock desnecessário dá falsa sensação de segurança e adiciona complexidade sem benefício.
+- Bug de nomeação quebra queries PromQL e dashboards Grafana.
+
+**Impacto**
+
+- Elimina duplicação de estado
+- Corrige queries PromQL
+- Reduz complexidade acidental
+
+**Status**
+
+- `implementado`
+
+Arquivos impactados:
+
+- `inference_api/metrics.py`
+
+---
+
+## Decisão 12 — Usar apenas APIs não depreciadas do Python para timestamps
+
+**Antes**
+
+- `datetime.utcnow()` era usado em `ml/common.py` para gerar timestamps de runs.
+- Esse método foi depreciado no Python 3.12 por retornar um datetime naive sem timezone, facilitando erros silenciosos em comparações e serialização.
+
+**Decisão**
+
+- Substituir por `datetime.now(timezone.utc)`.
+
+**Motivo**
+
+- Usar APIs depreciadas aumenta dívida técnica e pode gerar warnings ou comportamento incorreto em versões futuras do Python.
+- Datetime com timezone explícita é mais seguro e mais expressivo.
+
+**Status**
+
+- `implementado`
+
+Arquivos impactados:
+
+- `ml/common.py`
+
+---
+
+## Decisão 13 — Guard de importação opcional deve ser explícito sobre sucesso e falha
+
+**Antes**
+
+- `ml/tokenizers.py` inicializava `_TF_TEXT_OK = True` antes do bloco `try`.
+- O `except` estava vazio e não atribuía `False` ao flag.
+- Em caso de falha na importação de `tensorflow_text`, o flag permanecia `True` e o código subsequente se comportava como se o módulo estivesse disponível.
+
+**Decisão**
+
+- O bloco `except` deve atribuir `_TF_TEXT_OK = False` explicitamente.
+- O flag deve refletir o resultado real da importação.
+
+**Motivo**
+
+- Um guard de importação que sempre retorna `True` não é um guard, é um bug silencioso.
+- Erros de importação mascarados são difíceis de diagnosticar em produção.
+
+**Status**
+
+- `implementado`
+
+Arquivos impactados:
+
+- `ml/tokenizers.py`
+
+---
+
 ## O que já está validado
 
 - `pytest` executado com sucesso após reparar a venv local
@@ -368,6 +495,7 @@ Arquivos impactados:
 - trigger real do `n8n` validado via webhook de produção
 - execução real dos nós `Execute Command` validada no container do `n8n`
 - direção funcional da tradução alinhada para EN→PT no pipeline, serving e documentação
+- refactorings de código limpo aplicados e CI passando
 
 ---
 

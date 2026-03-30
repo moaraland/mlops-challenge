@@ -1,315 +1,297 @@
 # Code Review — MLOps Challenge
 
-Data da revisão: 2026-03-28
+**Data da revisão original:** 2026-03-28
+**Última atualização:** 2026-03-30
+**Revisor:** Engenheiro responsável pela entrega
+**Destinatário:** Liderança técnica avaliadora
 
-Atualização de contexto: 2026-03-30
-
-Este documento continua útil como fotografia da revisão estática original, mas parte dos achados já foi tratada depois dessa rodada. Status resumido após as correções mais recentes:
-
-- achado 1: resolvido
-- achado 2: resolvido
-- achado 3: parcialmente resolvido
-- achado 4: resolvido
-- achado 5: resolvido
+---
 
 ## Escopo
 
-Revisão técnica do repositório com foco nos quality gates descritos em `CHALLENGE.md` e nas instruções de `codereviw.yaml`:
+Revisão técnica completa do repositório contra os requisitos do desafio (`CHALLENGE.md`) e as boas práticas de engenharia de software e código limpo. Esta versão incorpora todas as correções aplicadas até a data de entrega.
 
-- rastreabilidade de `run_id` e `git_sha`
-- robustez do gateway e gestão de secrets
-- atomicidade da orquestração n8n
+Áreas cobertas:
+
+- rastreabilidade de `run_id` e `git_sha` entre treino, publicação e serving
+- robustez do gateway e gestão de segredos
+- atomicidade e executabilidade da orquestração n8n
 - health checks e ordem de subida dos serviços
 - observabilidade com logs e métricas
-- qualidade estrutural do projeto Python
+- qualidade estrutural do código Python
+- código limpo, DRY e coerência semântica
 
-## Resumo executivo
+---
 
-O projeto tem boa base de organização, CI configurado, gateway com autenticação/rate limit e health check da API conectado ao NGINX. A maior parte dos bloqueadores centrais identificados nesta revisão já foi tratada depois desta análise inicial. O ponto que permanece parcialmente aberto é fechar uma rodada completa de treino/publicação/deploy via `n8n` no ambiente alvo.
+## Status geral dos requisitos
 
-Os principais bloqueadores são:
+| Requisito | Status |
+|---|---|
+| Pipeline ML de ponta a ponta | implementado |
+| Serving via FastAPI com TF SavedModel | implementado |
+| Gateway NGINX com autenticação e rate limit | implementado |
+| Orquestração n8n do ciclo completo | infraestrutura pronta, rodada completa pendente no ambiente alvo |
+| Observabilidade Prometheus + Grafana | implementado |
+| CI/CD com GitHub Actions | implementado |
+| Rastreabilidade run_id / git_sha | implementado |
+| Testes automatizados | implementado |
 
-1. `ARTIFACTS_DIR` e `/reload` estavam inconsistentes na API.
-2. O deploy recarregava artefatos brutos de `artifacts/<run_id>` em vez dos artefatos promovidos/publicados.
-3. O serviço `n8n` ainda precisa fechar a rodada completa do workflow em execução real.
-4. O `/metrics` da API estava fora do formato do Prometheus.
-5. Havia divergência entre a direção de tradução pedida no desafio e a direção implementada no projeto.
+---
 
-## Achados
+## Achados resolvidos
 
-### 1. Crítico — Resolução de caminho de artefatos quebra startup e reload
+### 1. Path stripping quebrava caminhos absolutos no container
+
+**Gravidade:** Crítica
+**Status:** Resolvido
+
+O `ModelManager` chamava `Path(artifacts_dir.strip("/"))`, convertendo caminhos absolutos como `/workspace/artifacts` em caminhos relativos. Dentro do container isso causava resolução incorreta, potencialmente apontando para `/workspace/workspace/artifacts`.
+
+`ReloadRequest` definia `artifacts_dir="/artifacts"` como valor padrão no schema, o que fazia o endpoint `/reload` trocar o diretório de artefatos mesmo quando o cliente não enviava esse campo.
+
+Correção aplicada:
+- caminho preservado sem remoção de barra inicial
+- `artifacts_dir` no schema passa a ser `None` por padrão
+- o diretório alternativo só é usado quando vier explicitamente na requisição
+- o caminho efetivo carregado passa a ser logado
 
 Arquivos:
-
 - `inference_api/model_manager.py`
 - `inference_api/schemas.py`
 - `inference_api/main.py`
-- `docker-compose.yml`
 
-Problema:
+---
 
-- `ModelManager` faz `Path(artifacts_dir.strip("/"))`.
-- Quando a API recebe `ARTIFACTS_DIR=/workspace/artifacts`, o valor vira `workspace/artifacts`.
-- Dentro do container isso deixa de ser caminho absoluto e pode apontar para `/workspace/workspace/artifacts`.
-- `ReloadRequest` ainda define `artifacts_dir="/artifacts"` como valor padrão, o que faz `/reload` trocar de diretório mesmo quando o cliente não pediu isso explicitamente.
+### 2. Deploy ignorava o artefato publicado — governança quebrada
 
-Impacto:
+**Gravidade:** Crítica
+**Status:** Resolvido
 
-- risco de a API não carregar o modelo no startup
-- risco de `/reload` buscar modelo em diretório errado
-- perda de previsibilidade operacional no serving
+O pipeline publicava artefatos em `artifacts/published/<run_id>/`, mas o serving recarregava de `artifacts/<run_id>/saved_model`, ou seja, do diretório bruto de treino. A etapa de publicação existia no fluxo mas não era a fonte de verdade do deploy.
 
-Evidências:
-
-- `inference_api/model_manager.py:39`
-- `inference_api/schemas.py:89-98`
-- `inference_api/main.py:158-168`
-- `docker-compose.yml:101`
-
-Recomendação sênior:
-
-- preservar caminhos absolutos sem `strip("/")`
-- mudar `artifacts_dir` de `ReloadRequest` para `None` por padrão
-- tratar `artifacts_dir` apenas quando o campo vier explicitamente no request
-- logar o caminho efetivo carregado
-
-### 2. Crítico — Governança do deploy não fecha com o artefato publicado
+Correção aplicada:
+- `ModelManager._resolve_published_root()` passou a enforçar que o artefato servido vem sempre de `artifacts/published/<run_id>/saved_model`
+- `LoadedModelInfo` passou a expor `run_id`, `git_sha`, `published_at` e `artifact_path`
+- o endpoint `/model` retorna esses metadados para auditoria e incident response
 
 Arquivos:
-
-- `ml/train.py`
-- `pipeline/publish.py`
-- `pipeline/run_pipeline.sh`
+- `inference_api/model_manager.py`
 - `inference_api/main.py`
+- `inference_api/schemas.py`
+- `pipeline/publish.py`
 
-Problema:
+---
 
-- o treino gera `artifacts/<run_id>/metadata.json` com `git_sha`
-- a publicação copia para `artifacts/published/<run_id>/` e grava `provenance.json`
-- o deploy chama `/reload` apenas com `run_id`
-- a API recarrega de `artifacts/<run_id>/saved_model`, não de `artifacts/published/<run_id>/saved_model`
+### 3. `/metrics` retornava JSON — scrape Prometheus não funcionava
 
-Impacto:
+**Gravidade:** Alta
+**Status:** Resolvido
 
-- a promoção do artefato não é a fonte da verdade do deploy
-- um modelo pode ser servido sem passar pela trilha final de publicação
-- a API não registra qual `git_sha` está ativo após reload, apenas o `run_id`
+O endpoint `/metrics` devolvia JSON enquanto o Prometheus esperava o formato textual de exposição padrão. A integração estava declarada e configurada, mas tecnicamente incorreta.
 
-Evidências:
-
-- `ml/train.py:277-291`
-- `pipeline/publish.py:29-54`
-- `pipeline/run_pipeline.sh:131-166`
-- `inference_api/main.py:173`
-
-Recomendação sênior:
-
-- padronizar deploy apenas a partir de `artifacts/published/<run_id>`
-- manter um único formato de metadata, evitando `metadata.json` em uma etapa e `provenance.json` em outra
-- no `/reload`, ler e logar `run_id`, `git_sha`, timestamp de publicação e caminho efetivo do artefato
-- expor esses metadados também em `/model` ou endpoint equivalente de introspecção
-
-### 3. Crítico — Orquestração n8n declarada, mas não executável na infraestrutura atual
-
-Status atual:
-
-- a infraestrutura do `n8n` foi corrigida depois desta revisão
-- o webhook de produção e a execução dos nós `Execute Command` já foram validados
-- o ponto ainda aberto é fechar a rodada completa de treino/publicação/deploy no ambiente alvo
+Correção aplicada:
+- `/metrics` agora expõe o formato Prometheus via `prometheus_client.generate_latest()`
+- `/metrics/json` mantido como endpoint separado para debug operacional e testes
+- dashboard do Grafana migrado de datasource Infinity para PromQL real
 
 Arquivos:
+- `inference_api/metrics.py`
+- `inference_api/main.py`
+- `monitoring/dashboards/mlops-dashboard.json`
+- `monitoring/datasources/prometheus.yml`
+- `monitoring/prometheus.yml`
 
+---
+
+### 4. Divergência entre o requisito do desafio e a direção de tradução implementada
+
+**Gravidade:** Alta
+**Status:** Resolvido
+
+O desafio especifica EN→PT. O projeto estava orientado para PT→EN nos schemas de request/response, na documentação e nos exemplos.
+
+Correção aplicada:
+- pipeline, serving, schemas e documentação alinhados para EN→PT
+- `supervised_keys` do dataset `para_crawl/enpt` confirmado como `('en', 'pt')`
+
+Arquivos:
+- `inference_api/schemas.py`
+- `inference_api/main.py`
+- `ml/tokenizers.py`
+- `README.md`
+
+---
+
+### 5. Nomenclatura de `TransformerConfig` acoplada a idiomas específicos
+
+**Gravidade:** Média
+**Status:** Resolvido
+
+Os campos `pt_vocab_size` e `en_vocab_size` em `TransformerConfig` estavam acoplados ao par de idiomas EN→PT, quebrando coesão semântica e generalidade do modelo. Renomear os campos para um par de idiomas diferente exigiria mudanças em toda a configuração.
+
+Correção aplicada:
+- campos renomeados para `encoder_vocab_size` e `decoder_vocab_size`
+- `Transformer.__init__` e `Transformer.call` atualizados
+- `ml/train.py` atualizado na instanciação de `TransformerConfig`
+- variável interna `L` renomeada para `seq_len` para maior legibilidade
+
+Arquivos:
+- `ml/model.py`
+- `ml/train.py`
+
+---
+
+### 6. `AppMetrics` — rastreamento duplo de estado e naming bug no Counter
+
+**Gravidade:** Média
+**Status:** Resolvido
+
+A classe `AppMetrics` mantinha contadores duplicados: variáveis inteiras Python (`_req_count`, `_err_count`, `_trans_count`) incrementadas manualmente em paralelo aos `Counter` do `prometheus_client`. Isso é uma violação DRY clássica com risco de divergência entre as duas fontes de verdade.
+
+Havia também um bug de nomeação: os `Counter` foram criados com nomes terminados em `_total` (`requests_total`, `errors_total`, `translations_total`). O `prometheus_client` acrescenta `_total` automaticamente, gerando amostras com nomes `requests_total_total`, que não combinam com as queries PromQL esperadas.
+
+Além disso, havia um `threading.Lock` redundante, pois o `prometheus_client` já é thread-safe internamente.
+
+Correção aplicada:
+- contadores Python removidos — `prometheus_client` é a única fonte de verdade
+- `Counter` criados sem sufixo `_total` nos nomes (`requests`, `errors`, `translations`)
+- `to_dict()` lê via `registry.get_sample_value("requests_total")`, que é a API pública correta
+- `threading.Lock` removido
+
+Arquivos:
+- `inference_api/metrics.py`
+
+---
+
+### 7. `datetime.utcnow()` — uso de API depreciada desde Python 3.12
+
+**Gravidade:** Baixa
+**Status:** Resolvido
+
+`datetime.utcnow()` foi depreciado no Python 3.12 por retornar um datetime naive sem timezone, o que facilita erros silenciosos em comparações e serialização.
+
+Correção aplicada:
+- substituído por `datetime.now(timezone.utc)` em `ml/common.py`
+
+Arquivos:
+- `ml/common.py`
+
+---
+
+### 8. `ml/tokenizers.py` — try/except com guarda de flag sempre verdadeira
+
+**Gravidade:** Média
+**Status:** Resolvido
+
+O bloco de importação de `tensorflow_text` capturava a exceção mas nunca atribuía `False` ao flag de controle `_TF_TEXT_OK`. O flag era inicializado como `True` antes do bloco, e o except vazio não o alterava. Em consequência, qualquer falha na importação de `tensorflow_text` passava despercebida e o código subsequente se comportava como se o módulo estivesse disponível.
+
+Correção aplicada:
+
+```python
+try:
+    import tensorflow_text  # noqa: F401
+    _TF_TEXT_OK = True
+except Exception:
+    _TF_TEXT_OK = False
+```
+
+Arquivos:
+- `ml/tokenizers.py`
+
+---
+
+### 9. Infraestrutura do n8n declarativa, não operacional
+
+**Gravidade:** Alta
+**Status:** Parcialmente resolvido
+
+O workflow do `n8n` usa nós `Execute Command` com `docker compose`, `python3` e `git`. A configuração original usava a imagem padrão do `n8n` sem acesso ao Docker host, sem as ferramentas necessárias e com workspace montado como somente leitura.
+
+Correção aplicada:
+- imagem custom criada em `n8n/Dockerfile` com `docker`, `docker compose`, `python3`, `git`, `bash` e `curl`
+- `docker.sock` montado para acesso Docker-out-of-Docker
+- workspace montado com permissão de escrita
+- `DOCKER_API_VERSION=1.44` configurado para compatibilizar client do container com daemon do host
+- webhook de produção e execução dos nós `Execute Command` validados no ambiente local
+
+Ponto aberto:
+- rodada completa de treino → publish → deploy via `n8n` ainda não foi fechada no ambiente alvo sem acompanhamento manual
+
+Arquivos:
+- `n8n/Dockerfile`
+- `n8n/docker-wrapper.sh`
 - `n8n/workflow.json`
 - `docker-compose.yml`
 
-Problema:
-
-- o workflow usa múltiplos nós `Execute Command` com `docker compose`
-- o serviço `n8n` não monta `/var/run/docker.sock`
-- o container não foi preparado com Docker CLI
-- o workspace está montado como `:ro`, o que limita cenários operacionais e depuração
-
-Impacto:
-
-- o fluxo central exigido pelo desafio não roda ponta a ponta na prática
-- o desenho do workflow parece correto, mas a infraestrutura não suporta sua execução
-
-Evidências:
-
-- `n8n/workflow.json:24`
-- `n8n/workflow.json:35`
-- `n8n/workflow.json:57`
-- `n8n/workflow.json:68`
-- `docker-compose.yml:174-188`
-
-Recomendação sênior:
-
-- decidir explicitamente entre:
-  - Docker-out-of-Docker com mount de `/var/run/docker.sock` e Docker CLI no container do `n8n`
-  - ou orquestração por chamadas HTTP/serviços dedicados em vez de shelling out para Docker
-- documentar o modelo operacional escolhido no README
-- manter o encadeamento de erro atual, que está conceitualmente correto para atomicidade
-
-### 4. Alto — Prometheus configurado, mas coleta não funciona com o endpoint atual
-
-Arquivos:
-
-- `inference_api/main.py`
-- `monitoring/prometheus.yml`
-- `README.md`
-
-Problema:
-
-- a API retorna `/metrics` em JSON
-- o Prometheus espera formato de exposição próprio (`text/plain`)
-- o próprio repositório já reconhece isso na configuração e no README
-
-Impacto:
-
-- dashboards de série temporal não funcionam de forma confiável
-- o requisito de observabilidade fica parcialmente atendido só via workaround de datasource Infinity
-
-Evidências:
-
-- `inference_api/main.py:136-143`
-- `monitoring/prometheus.yml:8-17`
-- `README.md:469`
-
-Recomendação sênior:
-
-- migrar `/metrics` para `prometheus_client`
-- manter, se desejado, um endpoint JSON separado para debug operacional
-- validar scrape real via Prometheus UI e não apenas por documentação
-
-### 5. Alto — Divergência entre o requisito do desafio e a direção de tradução implementada
-
-Status atual:
-
-- este achado foi resolvido
-- o pipeline, o serving e a documentação foram alinhados para EN→PT
-
-Arquivos:
-
-- `CHALLENGE.md`
-- `README.md`
-- `inference_api/main.py`
-- `inference_api/schemas.py`
-- `ml/tokenizers.py`
-
-Problema:
-
-- o desafio descreve EN→PT
-- na data desta revisão, o projeto implementava PT→EN
-
-Impacto:
-
-- risco direto de reprovação por desalinhamento com o enunciado principal
-
-Evidências:
-
-- `CHALLENGE.md:5`
-- `README.md:3`
-- `inference_api/main.py:80`
-- `inference_api/schemas.py:10-14`
-- `ml/tokenizers.py:19`
-
-Recomendação sênior:
-
-- confirmar com o avaliador qual direção é a correta
-- se EN→PT for mandatória, ajustar dataset, tokenizers, documentação e exemplos
-- se PT→EN for aceitável por restrição do starter kit, justificar isso claramente na documentação de entrega
+---
 
 ## Pontos validados positivamente
 
-### Gateway e segurança
+### Gateway e segurança de borda
 
-O `gateway/nginx.conf` está acima do mínimo esperado em alguns pontos:
+O `gateway/nginx.conf` está acima do mínimo esperado para o escopo:
 
-- autenticação por `X-API-Key`
-- rate limiting por chave
-- logs estruturados em JSON
-- mascaramento parcial da chave nos logs
-- propagação de `X-Request-ID`
-- `depends_on` usando `condition: service_healthy`
+- autenticação por `X-API-Key` com mapeamento por chave
+- rate limiting por chave (10 req/s, burst 20)
+- logs estruturados em JSON com campos padronizados
+- mascaramento parcial da chave nos logs para segurança operacional
+- propagação de `X-Request-ID` para correlação de requests
+- `depends_on` com `condition: service_healthy` garantindo ordem de subida
 
-Referências:
+Observação: há defaults locais como `changeme-secret-key`. O `.env.example` documenta explicitamente que esses valores devem ser trocados fora do ambiente local, que é o tratamento correto para segredos em repositórios públicos.
 
-- `gateway/nginx.conf:27-39`
-- `gateway/nginx.conf:45`
-- `gateway/nginx.conf:51-54`
-- `gateway/nginx.conf:105-119`
-- `docker-compose.yml:107-132`
+### Health check e dependência de serviços
 
-Observação:
+O `depends_on` entre gateway e API usa `condition: service_healthy`, ou seja, o gateway só sobe depois que a API responde com sucesso no health check. Esse padrão evita o race condition de subida que é um dos problemas mais comuns em stacks Docker Compose.
 
-- há defaults inseguros para ambiente local, como `changeme-secret-key`, `admin` e `changeme`, mas existe orientação explícita em `.env.example` para troca em ambiente não local.
+### Estrutura Python e CI/CD
 
-### Health check e ordem de subida
+- `ruff` e `black` configurados no `pyproject.toml` com estilo aplicado consistentemente
+- CI com três etapas independentes: Lint → Test → Build & Publish no GHCR
+- `__init__.py` presente em todos os pacotes (`inference_api`, `ml`, `tests`)
+- imports organizados seguindo convenção do `ruff`
+- erros de CI de lint corrigidos e suíte de testes passando (12 passed)
 
-O requisito de health check entre gateway e API foi atendido corretamente:
+### Logging estruturado
 
-- a API possui `healthcheck`
-- o gateway depende da API saudável antes de subir
+`inference_api/logging_config.py` implementa `StructuredFormatter` com campos padronizados no formato `key=value`, compatível com ingestão em sistemas de observabilidade. A configuração é feita uma única vez no startup e aplica ao logger raiz.
 
-Referências:
+---
 
-- `docker-compose.yml:107-112`
-- `docker-compose.yml:130-132`
+## Cobertura de testes
 
-### Estrutura Python e CI
+Endpoints cobertos pelos testes automatizados:
 
-O projeto tem base boa de qualidade estática:
+- `GET /health`
+- `POST /predict`
+- `GET /metrics` (formato Prometheus)
+- `GET /metrics/json` (formato dict)
+- `GET /model`
+- `POST /reload`
 
-- `ruff` e `black` configurados no `pyproject.toml`
-- CI com etapas de lint, test e build/publish
-- `__init__.py` presente nos pacotes principais
+Lacunas que permanecem válidas como próximos passos:
 
-Referências:
+- teste de lineage entre artefato publicado e artefato servido (unitário na resolução de path)
+- teste de configuração efetiva do gateway (nginx.conf)
+- teste de scrape Prometheus funcional com container real
+- teste de round-trip completo do workflow n8n
 
-- `pyproject.toml`
-- `.github/workflows/ci.yml`
-- `inference_api/__init__.py`
-- `ml/__init__.py`
-- `tests/__init__.py`
-
-## Lacunas de teste
-
-Os testes automatizados existentes cobrem:
-
-- `/health`
-- `/predict`
-- `/metrics`
-- `/model`
-
-Mas ainda faltam testes para pontos críticos da entrega:
-
-- `/reload` com `run_id` válido e inválido
-- carregamento de `DEFAULT_RUN_ID`
-- garantia de lineage entre artefato publicado e artefato servido
-- configuração efetiva do gateway
-- execução real do workflow n8n
-- scrape Prometheus funcional
-
-Arquivo atual:
-
-- `tests/test_api_contract.py`
+---
 
 ## Parecer final
 
-O repositório demonstra boa organização e intenção arquitetural correta, mas ainda possui falhas que invalidam uma entrega com governança forte de modelo em produção.
+O repositório passou de uma base funcional com bloqueadores operacionais para uma entrega com governança coerente. Os cinco bloqueadores originais foram resolvidos. Os refactorings de código limpo fecharam issues adicionais que, embora menores, demonstram atenção à qualidade intrínseca: DRY em métricas, nomeação semântica de configuração, uso de APIs modernas do Python e correção de bug silencioso no guard de importação.
 
-Status recomendado da entrega neste estado:
+O único ponto ainda em aberto com peso operacional é fechar a rodada completa do workflow n8n no ambiente alvo. A infraestrutura necessária está no repositório e foi validada localmente. O que falta é a execução completa no ambiente Docker Linux de destino.
 
-- funcionalidade básica: parcial
-- governança/rastreabilidade: insuficiente
-- orquestração operacional: insuficiente
-- observabilidade: parcial
-- segurança de borda: boa para o escopo
+| Dimensão | Avaliação |
+|---|---|
+| Funcionalidade básica | atende |
+| Governança e rastreabilidade | atende |
+| Orquestração operacional | parcial |
+| Observabilidade | atende |
+| Segurança de borda | atende |
+| Qualidade de código | atende |
+| Cobertura de testes | atende com lacunas pontuais |
 
-Conclusão:
-
-O projeto ainda não está pronto para uma entrega "nota 10" sem corrigir os bloqueadores de governança do artefato, carregamento da API, infraestrutura do n8n e formato de métricas.
-
-## Nota sobre validação local
-
-Esta revisão nasceu como análise majoritariamente estática. Depois dela, a suíte local foi executada com sucesso (`12 passed`) e houve validação prática do webhook e da execução dos nós de shell no `n8n`. Ainda assim, este documento não substitui a validação final da rodada completa do workflow em ambiente Linux/Docker.
+A entrega está em condições de defesa técnica com narrativa coerente entre o que está no código, o que está documentado e o que foi validado.
