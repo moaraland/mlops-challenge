@@ -11,6 +11,8 @@ from typing import Tuple
 import tensorflow as tf
 
 try:
+    import tensorflow_text  # noqa: F401
+
     _TF_TEXT_OK = True
 except Exception:
     _TF_TEXT_OK = False

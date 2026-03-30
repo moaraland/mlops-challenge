@@ -132,8 +132,8 @@ class DecoderLayer(tf.keras.layers.Layer):
 
 @dataclass(frozen=True)
 class TransformerConfig:
-    pt_vocab_size: int
-    en_vocab_size: int
+    encoder_vocab_size: int
+    decoder_vocab_size: int
     max_tokens: int
     num_layers: int = 4
     d_model: int = 128
@@ -146,11 +146,11 @@ class Transformer(tf.keras.Model):
     def __init__(self, cfg: TransformerConfig, **kwargs):
         super().__init__(**kwargs)
         self.cfg = cfg
-        self.pt_embed = PositionalEmbedding(
-            cfg.pt_vocab_size, cfg.d_model, cfg.max_tokens, name="pt_embed"
+        self.encoder_embed = PositionalEmbedding(
+            cfg.encoder_vocab_size, cfg.d_model, cfg.max_tokens, name="encoder_embed"
         )
-        self.en_embed = PositionalEmbedding(
-            cfg.en_vocab_size, cfg.d_model, cfg.max_tokens, name="en_embed"
+        self.decoder_embed = PositionalEmbedding(
+            cfg.decoder_vocab_size, cfg.d_model, cfg.max_tokens, name="decoder_embed"
         )
 
         self.enc_layers = [
@@ -166,28 +166,28 @@ class Transformer(tf.keras.Model):
             for i in range(cfg.num_layers)
         ]
 
-        self.final_dense = tf.keras.layers.Dense(cfg.en_vocab_size, name="logits")
+        self.final_dense = tf.keras.layers.Dense(cfg.decoder_vocab_size, name="logits")
 
     def call(self, inputs, training: bool = False) -> tf.Tensor:
-        pt, en_in = inputs
+        encoder_input, decoder_input = inputs
 
-        pt_mask = _padding_mask(pt)
-        en_mask = _padding_mask(en_in)
+        enc_mask = _padding_mask(encoder_input)
+        dec_mask = _padding_mask(decoder_input)
 
-        x = self.pt_embed(pt)
-        enc_attn_mask = pt_mask[:, tf.newaxis, :]
+        x = self.encoder_embed(encoder_input)
+        enc_attn_mask = enc_mask[:, tf.newaxis, :]
         for layer in self.enc_layers:
             x = layer(x, training=training, mask=enc_attn_mask)
         enc_out = x
 
-        L = tf.shape(en_in)[1]
-        causal = _causal_mask(L)
+        seq_len = tf.shape(decoder_input)[1]
+        causal = _causal_mask(seq_len)
         self_attn_mask = tf.logical_and(
-            causal[tf.newaxis, :, :], en_mask[:, tf.newaxis, :]
+            causal[tf.newaxis, :, :], dec_mask[:, tf.newaxis, :]
         )
-        cross_mask = pt_mask[:, tf.newaxis, :]
+        cross_mask = enc_mask[:, tf.newaxis, :]
 
-        y = self.en_embed(en_in)
+        y = self.decoder_embed(decoder_input)
         for layer in self.dec_layers:
             y = layer(
                 y,

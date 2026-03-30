@@ -227,11 +227,9 @@ def main() -> None:
     train_ds = train_ds.repeat()
     val_ds_fit = val_ds.repeat()
 
-    # TransformerConfig ainda usa nomes internos legados (pt/en), mas o
-    # pipeline foi alinhado para EN -> PT: encoder=source(en), decoder=target(pt).
     cfg = TransformerConfig(
-        pt_vocab_size=prepared.source_vocab_size,
-        en_vocab_size=prepared.target_vocab_size,
+        encoder_vocab_size=prepared.source_vocab_size,
+        decoder_vocab_size=prepared.target_vocab_size,
         max_tokens=args.max_tokens,
         num_layers=args.num_layers,
         d_model=args.d_model,

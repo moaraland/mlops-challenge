@@ -165,8 +165,17 @@ def main() -> None:
         seed=args.seed,
     )
 
+    import json
+
     print(
-        f'{{"stage":"prepare_dataset","output_dir":"{Path(args.output_dir).as_posix()}","train_records":{info.train_records},"val_records":{info.val_records}}}'
+        json.dumps(
+            {
+                "stage": "prepare_dataset",
+                "output_dir": Path(args.output_dir).as_posix(),
+                "train_records": info.train_records,
+                "val_records": info.val_records,
+            }
+        )
     )
 
 

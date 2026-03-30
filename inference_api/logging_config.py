@@ -81,10 +81,4 @@ def setup_logging(level: int = logging.INFO) -> None:
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
-
-    # Evita duplicação de handlers em re-inicializações (ex.: testes)
-    if not root_logger.handlers:
-        root_logger.addHandler(handler)
-    else:
-        root_logger.handlers.clear()
-        root_logger.addHandler(handler)
+    root_logger.handlers = [handler]
