@@ -20,11 +20,17 @@ def publish(
     source_metadata_path = source_dir / "metadata.json"
 
     if not source_dir.exists():
-        print(f"[publish] ERROR: artifacts directory not found: {source_dir}", file=sys.stderr)
+        print(
+            f"[publish] ERROR: artifacts directory not found: {source_dir}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if not metrics_path.exists():
-        print(f"[publish] ERROR: metrics.json not found at {metrics_path}", file=sys.stderr)
+        print(
+            f"[publish] ERROR: metrics.json not found at {metrics_path}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if not source_metadata_path.exists():
@@ -37,7 +43,9 @@ def publish(
     dest_dir = artifacts_dir / "published" / run_id
 
     if dest_dir.exists():
-        print(f"[publish] WARNING: already published at {dest_dir} — skipping (idempotent).")
+        print(
+            f"[publish] WARNING: already published at {dest_dir} — skipping (idempotent)."
+        )
         return dest_dir
 
     shutil.copytree(str(source_dir), str(dest_dir))
@@ -71,12 +79,25 @@ def publish(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Publish validated model artifacts with provenance metadata.")
+    parser = argparse.ArgumentParser(
+        description="Publish validated model artifacts with provenance metadata."
+    )
     parser.add_argument("--run_id", required=True, help="Run ID to publish.")
-    parser.add_argument("--git_sha", required=True, help="Git commit SHA for provenance.")
-    parser.add_argument("--epochs", type=int, required=True, help="Number of training epochs.")
-    parser.add_argument("--threshold", type=float, required=True, help="Quality threshold used during validation.")
-    parser.add_argument("--artifacts_dir", default="artifacts", help="Root artifacts directory.")
+    parser.add_argument(
+        "--git_sha", required=True, help="Git commit SHA for provenance."
+    )
+    parser.add_argument(
+        "--epochs", type=int, required=True, help="Number of training epochs."
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        required=True,
+        help="Quality threshold used during validation.",
+    )
+    parser.add_argument(
+        "--artifacts_dir", default="artifacts", help="Root artifacts directory."
+    )
     args = parser.parse_args()
 
     artifacts_dir = Path(args.artifacts_dir)

@@ -194,7 +194,6 @@ def test_model_endpoint_exposes_loaded_model_metadata(tmp_path, monkeypatch):
     body = model_response.json()
     assert body["run_id"] == run_id
     assert body["git_sha"] == "abc1234"
-    assert (
-        body["artifact_path"].endswith(f"published\\{run_id}\\saved_model")
-        or body["artifact_path"].endswith(f"published/{run_id}/saved_model")
-    )
+    assert body["artifact_path"].endswith(f"published\\{run_id}\\saved_model") or body[
+        "artifact_path"
+    ].endswith(f"published/{run_id}/saved_model")

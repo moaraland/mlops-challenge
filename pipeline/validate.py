@@ -10,7 +10,10 @@ def validate(run_id: str, threshold: float, artifacts_dir: Path) -> bool:
     metrics_path = artifacts_dir / run_id / "metrics.json"
 
     if not metrics_path.exists():
-        print(f"[validate] ERROR: metrics.json not found at {metrics_path}", file=sys.stderr)
+        print(
+            f"[validate] ERROR: metrics.json not found at {metrics_path}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     with metrics_path.open() as f:
@@ -28,10 +31,19 @@ def validate(run_id: str, threshold: float, artifacts_dir: Path) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate model metrics against a quality threshold.")
+    parser = argparse.ArgumentParser(
+        description="Validate model metrics against a quality threshold."
+    )
     parser.add_argument("--run_id", required=True, help="Run ID to validate.")
-    parser.add_argument("--threshold", type=float, required=True, help="Minimum val_token_accuracy to approve.")
-    parser.add_argument("--artifacts_dir", default="artifacts", help="Root artifacts directory.")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        required=True,
+        help="Minimum val_token_accuracy to approve.",
+    )
+    parser.add_argument(
+        "--artifacts_dir", default="artifacts", help="Root artifacts directory."
+    )
     args = parser.parse_args()
 
     artifacts_dir = Path(args.artifacts_dir)
