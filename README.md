@@ -1,4 +1,4 @@
-# MLOps Challenge — Neural Machine Translation EN to PT
+# MLOps Challenge — Neural Machine Translation EN→PT
 
 End-to-end MLOps solution for an English-to-Portuguese neural machine translation service. The project covers the full model lifecycle: dataset preparation, model training, quality validation, artifact publishing, inference serving, observability, and automated orchestration.
 
