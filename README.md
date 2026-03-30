@@ -1,205 +1,627 @@
-# 🌐 MLOps Challenge Starter — Neural Machine Translation (EN → PT)
+# MLOps Challenge — Neural Machine Translation EN to PT
 
-Repositório inicial (**starter kit**) para o desafio de MLOps. Contém as rotinas base de preparação de dados, treinamento e inferência para um modelo de tradução automática Inglês -> Português, utilizando um **Transformer** customizado com TensorFlow/Keras.
-
-> **O objetivo do candidato é construir a automação end-to-end (CI/CD, orquestração, monitoramento, etc.) em cima destas rotinas já fornecidas.**
->
-> 📄 **Consulte a especificação completa do desafio em [CHALLENGE.md](CHALLENGE.md).**
+End-to-end MLOps solution for an English-to-Portuguese neural machine translation service. The project covers the full model lifecycle: dataset preparation, model training, quality validation, artifact publishing, inference serving, observability, and automated orchestration.
 
 ---
 
-## 📋 Visão Geral
+## Table of Contents
 
-Este repositório fornece as **rotinas base** que o candidato utilizará para implementar a automação MLOps. As peças já inclusas são:
-
-| Componente | Descrição |
-|---|---|
-| **Preparação de Dados** | Download e tokenização do dataset [ParaCrawl EN-PT](https://www.paracrawl.eu/) via TensorFlow Datasets, exportando TFRecords prontos para treino |
-| **Treinamento** | Modelo Transformer (encoder-decoder) com warmup schedule, masked loss/accuracy e versionamento automático de artefatos |
-| **Inference API** | API REST (FastAPI + Uvicorn) para tradução em tempo real, com métricas, health check e hot-reload de modelos |
-| **Testes** | Suite de testes de contrato da API via Pytest + HTTPX |
-
-> [!IMPORTANT]
-> Estas rotinas já funcionam individualmente via Docker Compose. O desafio consiste em **automatizar e orquestrar** todo o ciclo de vida do modelo de ponta a ponta.
+1. [Architecture](#architecture)
+2. [Quick Start](#quick-start)
+3. [Prerequisites](#prerequisites)
+4. [Running the Services](#running-the-services)
+   - [Prepare Dataset](#1-prepare-dataset)
+   - [Train Model](#2-train-model)
+   - [API and Gateway](#3-api-and-gateway)
+   - [Monitoring](#4-monitoring)
+   - [n8n Orchestration](#5-n8n-orchestration)
+   - [Full Stack](#6-full-stack)
+5. [ML Pipeline — Bash Script](#ml-pipeline--bash-script)
+6. [ML Pipeline — n8n Workflow](#ml-pipeline--n8n-workflow)
+7. [API Reference](#api-reference)
+8. [Observability](#observability)
+9. [CI/CD](#cicd)
+10. [Technical Decisions](#technical-decisions)
+11. [Environment Variables](#environment-variables)
+12. [Tech Stack](#tech-stack)
 
 ---
 
-## 🏗️ Arquitetura
+## Architecture
 
 ```
-mlops_challenge_starter/
-├── ml/                        # Pipeline de ML
-│   ├── common.py              # Utilitários (I/O JSON, hashing, run_id)
-│   ├── tokenizers.py          # Download e carregamento de tokenizers
-│   ├── prepare_dataset.py     # Preparação do dataset (TFRecords)
-│   ├── model.py               # Transformer (Encoder/Decoder/Positional Encoding)
-│   └── train.py               # Loop de treino, exportação de SavedModel
-│
-├── inference_api/             # API de inferência
-│   ├── main.py                # Endpoints FastAPI
-│   ├── model_manager.py       # Gerenciamento thread-safe do SavedModel
-│   ├── schemas.py             # Schemas Pydantic (request/response)
-│   ├── metrics.py             # Contadores de métricas da aplicação
-│   └── logging_config.py      # Configuração de logging estruturado
-│
-├── tests/                     # Testes automatizados
-│   └── test_api_contract.py   # Testes de contrato dos endpoints
-│
-├── data/                      # Dados processados (gerados)
-├── artifacts/                 # Artefatos de treino (SavedModel, configs)
-├── Dockerfile                 # Imagem base (Python 3.11-slim)
-├── docker-compose.yml         # Orquestração de todos os serviços
-└── requirements.txt           # Dependências Python
+GitHub Actions (CI/CD)
+  Lint (ruff + black)
+  Test (docker compose --profile tests)
+  Build & Publish (GHCR — ghcr.io/moaraland/mlops-challenge)
+          |
+          v
+Docker Compose (local / server)
+  ┌─────────────────────────────────────────────────────────┐
+  │  profile: api                                           │
+  │                                                         │
+  │   Internet ──► NGINX Gateway :80                        │
+  │                  Auth: X-API-Key header                 │
+  │                  Rate: 10 req/s per key (burst 20)      │
+  │                  Logs: JSON structured                  │
+  │                  ↓                                      │
+  │               FastAPI / Uvicorn :8000                   │
+  │                  GET  /health   (public)                │
+  │                  GET  /model                            │
+  │                  GET  /metrics      (Prometheus)        │
+  │                  GET  /metrics/json (debug)             │
+  │                  POST /predict  (EN -> PT)              │
+  │                  POST /reload   (hot-reload)            │
+  └─────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────┐
+  │  profile: monitoring         │
+  │                              │
+  │   Prometheus :9090           │
+  │     scrape api:8000/metrics  │
+  │     retention: 7 days        │
+  │   Grafana    :3000           │
+  │     datasource: Prometheus   │
+  │     dashboard: mlops-main    │
+  └──────────────────────────────┘
+  ┌──────────────────────────────┐
+  │  profile: n8n                │
+  │                              │
+  │   n8n :5678                  │
+  │     Webhook -> Prepare ->    │
+  │     Train -> Validate ->     │
+  │     Publish -> Deploy ->     │
+  │     Notify                   │
+  └──────────────────────────────┘
+
+ML Pipeline (bash or n8n)
+  Stage 1: prepare  — docker compose --profile prepare
+  Stage 2: train    — docker compose --profile train
+  Stage 3: validate — pipeline/validate.py (val_token_accuracy >= threshold)
+  Stage 4: publish  — pipeline/publish.py  (copy + published metadata)
+  Stage 5: deploy   — POST /reload (hot-reload, non-fatal if API is offline)
+
+Model: Transformer encoder-decoder (4 layers, d_model=128, 4 heads)
+Data:  ParaCrawl EN-PT via TensorFlow Datasets -> TFRecords
+Format: TensorFlow SavedModel
 ```
 
 ---
 
-## 🧠 Modelo
+## Quick Start
 
-O modelo é um **Transformer** com arquitetura encoder-decoder implementado do zero:
+Bring up the full stack and trigger a training run in four commands:
 
-- **Positional Encoding** — codificação posicional sinusoidal
-- **Encoder** — camadas com Multi-Head Attention + FFN + Layer Norm + Dropout
-- **Decoder** — camadas com Self-Attention + Cross-Attention + FFN + Layer Norm
-- **Learning Rate Schedule** — warmup linear seguido de decaimento inverso (baseado no paper *Attention Is All You Need*)
+```bash
+# 1. Copy and configure environment variables
+cp .env.example .env
 
-### Hiperparâmetros padrão
+# 2. Prepare the dataset (downloads ParaCrawl, generates TFRecords)
+docker compose --profile prepare up --build
 
-| Parâmetro | Valor |
-|---|---|
-| `num_layers` | 4 |
-| `d_model` | 128 |
-| `num_heads` | 4 |
-| `dff` | 512 |
-| `dropout` | 0.1 |
-| `max_tokens` | 64 |
+# 3. Start the API, gateway, monitoring, and orchestration
+docker compose --profile full up -d
+
+# 4. Trigger the ML pipeline via the production webhook URL generated by n8n
+curl -X POST <production-webhook-url> \
+  -H "Content-Type: application/json" \
+  -d '{"epochs": 5, "threshold": 0.30}'
+```
+
+See [ML Pipeline — n8n Workflow](#ml-pipeline--n8n-workflow) for how to obtain the production webhook URL after importing and activating the workflow.
+
+After training completes, call the API through the gateway:
+
+```bash
+curl -X POST http://localhost:80/predict \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: changeme-secret-key" \
+  -d '{"text": "Hello, how are you?"}'
+```
 
 ---
 
-## 🚀 Executando as Rotinas (Quick Start)
+## Prerequisites
 
-As rotinas podem ser executadas individualmente com Docker Compose usando **profiles**.
+| Requirement | Minimum version | Notes |
+|---|---|---|
+| Docker | 24.x | Required for all container services |
+| Docker Compose | 2.x (plugin) | `docker compose` (not `docker-compose`) |
+| Python | 3.11+ | Required only for `pipeline/run_pipeline.sh` and direct pipeline script execution |
+| bash | 4.x | Required for `pipeline/run_pipeline.sh` |
 
-### Pré-requisitos
+---
 
-- [Docker](https://docs.docker.com/get-docker/) e [Docker Compose](https://docs.docker.com/compose/install/)
+## Running the Services
 
-### 1. Preparar o Dataset
+All services are managed through Docker Compose profiles. Copy `.env.example` to `.env` before starting any service.
+
+```bash
+cp .env.example .env
+```
+
+### 1. Prepare Dataset
+
+Downloads the ParaCrawl EN-PT dataset, tokenizes it for EN→PT training, and writes TFRecords to `data/processed/`.
 
 ```bash
 docker compose --profile prepare up --build
 ```
 
-Baixa o dataset ParaCrawl EN-PT, tokeniza e gera TFRecords em `data/processed/`.
+Key variables:
 
-**Variáveis opcionais:**
-
-| Variável | Padrão | Descrição |
+| Variable | Default | Description |
 |---|---|---|
-| `DATASET_NAME` | `para_crawl/enpt` | Dataset do TFDS |
-| `MAX_TOKENS` | `64` | Máximo de tokens por sentença |
-| `TRAIN_RECORDS` | `5000` | Amostras de treino |
-| `VAL_RECORDS` | `500` | Amostras de validação |
-| `SEED` | `42` | Seed de reprodutibilidade |
+| `TRAIN_RECORDS` | `20000` | Number of training samples |
+| `VAL_RECORDS` | `2000` | Number of validation samples |
+| `OUTPUT_DIR` | `data/processed` | Output directory for TFRecords |
 
-### 2. Treinar o Modelo
+For a faster smoke test use smaller record counts:
+
+```bash
+TRAIN_RECORDS=1000 VAL_RECORDS=200 docker compose --profile prepare up --build
+```
+
+### 2. Train Model
+
+Trains the Transformer and exports a versioned SavedModel to `artifacts/<run_id>/`.
 
 ```bash
 docker compose --profile train up
 ```
 
-Treina o Transformer e exporta o SavedModel versionado em `artifacts/<run_id>/`.
+Key variables:
 
-**Variáveis opcionais:**
-
-| Variável | Padrão | Descrição |
+| Variable | Default | Description |
 |---|---|---|
-| `EPOCHS` | `5` | Número de épocas |
-| `BATCH_SIZE` | `32` | Tamanho do batch |
-| `THRESHOLD` | `0.30` | Threshold de qualidade |
-| `GIT_SHA` | `unknown` | SHA do commit para rastreabilidade |
+| `EPOCHS` | `10` | Training epochs |
+| `BATCH_SIZE` | `32` | Batch size |
+| `THRESHOLD` | `0.30` | Minimum val_token_accuracy to pass validation |
+| `GIT_SHA` | `unknown` | Commit SHA embedded in artifact metadata |
 
-### 3. Iniciar a API de Inferência
+For a quick test run:
+
+```bash
+EPOCHS=1 TRAIN_RECORDS=500 VAL_RECORDS=100 THRESHOLD=0.0 \
+  docker compose --profile train up
+```
+
+The last stdout line of the train container is a JSON summary containing `run_id`, used by downstream pipeline stages.
+
+### 3. API and Gateway
+
+Starts the FastAPI inference service and the NGINX API gateway.
 
 ```bash
 docker compose --profile api up
 ```
 
-A API estará disponível em **http://localhost:8000**.
+| Service | URL | Auth |
+|---|---|---|
+| API (direct) | `http://localhost:8000` | None |
+| Gateway | `http://localhost:80` | `X-API-Key` header required |
 
-> **Dica:** Para especificar um modelo, defina `DEFAULT_RUN_ID=<run_id>`.
+The gateway is the recommended entry point for external clients. The direct API port is available for internal/pipeline use.
 
-### 4. Executar os Testes
+To load a specific model on startup:
 
 ```bash
-docker compose --profile tests up
+DEFAULT_RUN_ID=nmt_20260225T130027Z_ap5vq0 docker compose --profile api up
+```
+
+### 4. Monitoring
+
+Starts Prometheus and Grafana.
+
+```bash
+docker compose --profile monitoring up -d
+```
+
+| Service | URL | Default credentials |
+|---|---|---|
+| Prometheus | `http://localhost:9090` | None |
+| Grafana | `http://localhost:3000` | `admin` / `admin` |
+
+The monitoring stack can run independently or alongside the API. When running together, use the `full` profile.
+
+### 5. n8n Orchestration
+
+Starts the n8n workflow automation service.
+
+```bash
+docker compose --profile n8n up -d
+```
+
+| Service | URL | Default credentials |
+|---|---|---|
+| n8n | `http://localhost:5678` | `admin` / `changeme` |
+
+Current status:
+
+- the workflow JSON is present and importable
+- the service now uses a custom runtime image with `docker`, `docker compose`, `python3`, `git`, `bash`, and `curl`
+- the workspace is mounted read-write and `/var/run/docker.sock` is exposed to the container
+- webhook trigger and command execution were validated in the local Docker environment
+- the workflow pins `DOCKER_API_VERSION=1.44` in the `docker compose` stages to match the daemon API exposed to the `n8n` container
+- a full round of train/publish/deploy via `n8n` should still be closed in the target environment as the final operational checkpoint
+
+See [ML Pipeline — n8n Workflow](#ml-pipeline--n8n-workflow) and [`TECH_DECISIONS.md`](TECH_DECISIONS.md) for the current status and next steps.
+
+### 6. Full Stack
+
+Starts all services (API, gateway, monitoring, and n8n) together:
+
+```bash
+docker compose --profile full up -d
+```
+
+Stop everything:
+
+```bash
+docker compose --profile full down
 ```
 
 ---
 
-## 📡 Endpoints da API
+## ML Pipeline — Bash Script
 
-| Método | Rota | Descrição                                                          |
-|---|---|--------------------------------------------------------------------|
-| `GET` | `/health` | Health check — status, `run_id` e `model_loaded`                   |
-| `GET` | `/model` | Retorna o `run_id` do modelo ativo                                 |
-| `GET` | `/metrics` | Contadores: `requests_total`, `errors_total`, `translations_total` |
-| `POST` | `/predict` | Traduz texto EN → PT                                               |
-| `POST` | `/reload` | Hot-reload de modelo por `run_id` ou `artifacts_dir`               |
-| `GET` | `/docs` | Documentação interativa (Swagger UI)                               |
+`pipeline/run_pipeline.sh` orchestrates all five stages sequentially. It requires Python 3.11+ and Docker Compose to be available on the host.
 
-### Exemplo — `/predict`
-
-**Request:**
 ```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Olá, como vai você?"}'
+bash pipeline/run_pipeline.sh
 ```
 
-**Response:**
+The script respects environment variables for all configurable parameters:
+
+```bash
+EPOCHS=5 \
+BATCH_SIZE=32 \
+THRESHOLD=0.30 \
+TRAIN_RECORDS=20000 \
+VAL_RECORDS=2000 \
+API_URL=http://localhost:8000 \
+  bash pipeline/run_pipeline.sh
+```
+
+**Stages:**
+
+| Stage | Description | Failure behaviour |
+|---|---|---|
+| 1 — Prepare | Runs `docker compose --profile prepare` | Fatal — aborts pipeline |
+| 2 — Train | Runs `docker compose --profile train`, captures `run_id` from last stdout line | Fatal — aborts pipeline |
+| 3 — Validate | Runs `pipeline/validate.py`: checks `val_token_accuracy >= threshold` | Fatal — artifacts are preserved |
+| 4 — Publish | Runs `pipeline/publish.py`: copies artifacts to `artifacts/published/<run_id>/` and consolidates publish metadata | Fatal |
+| 5 — Deploy | Calls `POST /reload` on the running API, which reloads from the published artifact path | Non-fatal — warns and continues |
+
+On success, the script prints a summary:
+
+```
+============================================================
+  PIPELINE SUMMARY
+============================================================
+  run_id        : nmt_20260225T130027Z_ap5vq0
+  metric_value  : 0.3512  (val_token_accuracy)
+  threshold     : 0.30
+  git_sha       : a1b2c3d
+  elapsed       : 12m 34s
+  artifacts     : artifacts/nmt_20260225T130027Z_ap5vq0/
+  published     : artifacts/published/nmt_20260225T130027Z_ap5vq0/
+============================================================
+```
+
+**Individual pipeline scripts:**
+
+```bash
+# Validate a specific run
+python3 pipeline/validate.py --run_id <run_id> --threshold 0.30
+
+# Publish a validated run
+python3 pipeline/publish.py \
+  --run_id <run_id> \
+  --git_sha $(git rev-parse --short HEAD) \
+  --epochs 10 \
+  --threshold 0.30
+```
+
+---
+
+## ML Pipeline — n8n Workflow
+
+### Import the workflow
+
+1. Open n8n at `http://localhost:5678` and log in.
+2. Go to **Workflows** > **Import from file**.
+3. Select `n8n/workflow.json`.
+4. Activate the workflow using the toggle in the top-right corner.
+
+### Trigger via webhook
+
+Use the production webhook URL shown by n8n after activation.
+
+- UI import typically exposes the short path configured in the Webhook node.
+- In the local CLI-import validation done for this repository, n8n registered the production URL below:
+
+```bash
+curl -X POST http://localhost:5678/webhook/mlops-pipeline-001/webhook/start-pipeline \
+  -H "Content-Type: application/json" \
+  -d '{
+    "epochs": 5,
+    "batch_size": 32,
+    "threshold": 0.30,
+    "train_records": 20000,
+    "val_records": 2000
+  }'
+```
+
+All body parameters are optional — the workflow uses the same defaults as the bash script.
+
+**Workflow nodes:**
+
+| Node | Type | Description |
+|---|---|---|
+| Webhook | Trigger | Receives POST on the production URL generated by n8n for the workflow |
+| Prepare Dataset | Execute Command | Runs `docker compose --profile prepare` |
+| Train Model | Execute Command | Runs `docker compose --profile train` |
+| Extract run_id | Code (JS) | Parses the last stdout line JSON to extract `run_id` |
+| Validate | Execute Command | Runs `pipeline/validate.py` |
+| Publish | Execute Command | Runs `pipeline/publish.py` |
+| Deploy | HTTP Request | Calls `POST /reload` on the API |
+| Notify | (configurable) | Success/failure notification |
+
+Runtime note:
+
+- depending on how the workflow is imported, n8n may register the production webhook with a workflow-specific prefix instead of the short `/webhook/start-pipeline` path
+- local validation already confirmed webhook registration plus execution of the shell-based stages inside the `n8n` container
+- the remaining checkpoint is completing a full train -> validate -> publish -> deploy round in the target environment
+
+---
+
+## API Reference
+
+### Authentication
+
+Requests to the NGINX gateway require the `X-API-Key` header. The `GET /health` endpoint is exempt.
+
+```bash
+# Unauthenticated (returns 401)
+curl http://localhost:80/predict -d '{"text": "Olá"}'
+
+# Authenticated
+curl http://localhost:80/predict \
+  -H "X-API-Key: changeme-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Olá"}'
+```
+
+### Endpoints
+
+| Method | Path | Auth required | Description |
+|---|---|---|---|
+| `GET` | `/health` | No | Health check — returns `status`, `run_id`, `model_loaded` |
+| `GET` | `/model` | Yes (gateway) | Returns active model metadata including `run_id`, `git_sha`, `published_at`, and `artifact_path` |
+| `GET` | `/metrics` | Yes (gateway) | Returns Prometheus exposition format |
+| `GET` | `/metrics/json` | Yes (gateway) | Returns request counters as JSON for debug |
+| `POST` | `/predict` | Yes (gateway) | Translates English text to Portuguese |
+| `POST` | `/reload` | Yes (gateway) | Hot-reloads the model by `run_id` from the published artifact path |
+| `GET` | `/docs` | Yes (gateway) | Interactive Swagger UI |
+
+### GET /health
+
+```bash
+curl http://localhost:8000/health
+```
+
 ```json
 {
-  "translation": "Hello, how are you?",
+  "status": "ok",
+  "run_id": "nmt_20260225T130027Z_ap5vq0",
+  "model_loaded": true
+}
+```
+
+### GET /metrics
+
+```bash
+curl -H "X-API-Key: changeme-secret-key" http://localhost:80/metrics
+```
+
+```text
+# HELP requests_total Total de requisições recebidas no endpoint /predict.
+# TYPE requests_total counter
+requests_total 42.0
+# HELP errors_total Total de erros retornados pelo endpoint /predict.
+# TYPE errors_total counter
+errors_total 4.0
+# HELP translations_total Total de traduções realizadas com sucesso.
+# TYPE translations_total counter
+translations_total 38.0
+```
+
+### GET /metrics/json
+
+```bash
+curl -H "X-API-Key: changeme-secret-key" http://localhost:80/metrics/json
+```
+
+```json
+{
+  "requests_total": 42,
+  "errors_total": 4,
+  "translations_total": 38
+}
+```
+
+### POST /predict
+
+```bash
+curl -X POST http://localhost:80/predict \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: changeme-secret-key" \
+  -d '{"text": "Hello, how are you?"}'
+```
+
+```json
+{
+  "translation": "Olá, como vai você?",
   "run_id": "nmt_20260225T130027Z_ap5vq0",
   "latency_ms": 42.5
 }
 ```
 
+Error responses: `422` for empty text or text exceeding 512 characters; `503` when no model is loaded.
+
+### POST /reload
+
+```bash
+curl -X POST http://localhost:8000/reload \
+  -H "Content-Type: application/json" \
+  -d '{"run_id": "nmt_20260225T130027Z_ap5vq0"}'
+```
+
+```json
+{
+  "status": "reloaded",
+  "run_id": "nmt_20260225T130027Z_ap5vq0",
+  "git_sha": "a1b2c3d",
+  "published_at": "2026-03-29T12:00:00+00:00",
+  "artifact_path": "/workspace/artifacts/published/nmt_20260225T130027Z_ap5vq0/saved_model"
+}
+```
+
+### Rate limiting
+
+The gateway enforces a rate limit of 10 requests per second per API key with a burst allowance of 20. Requests exceeding the limit receive HTTP `429`.
+
 ---
 
-## ⚙️ Variáveis de Ambiente (API)
+## Observability
 
-| Variável | Padrão | Descrição |
+### Grafana dashboard
+
+Open `http://localhost:3000` (credentials: `admin` / `admin`). The provisioned dashboard **MLOps Challenge — Inference API** (`uid: mlops-main`) contains:
+
+| Panel | Type | Metric |
 |---|---|---|
-| `ARTIFACTS_DIR` | `artifacts` | Diretório raiz dos artefatos |
-| `DEFAULT_RUN_ID` | *(vazio)* | `run_id` do modelo a carregar na inicialização |
-| `API_PORT` | `8000` | Porta exposta pelo Docker |
+| Total Requests | Stat | `requests_total` |
+| Total Translations | Stat | `translations_total` |
+| Total Errors | Stat | `errors_total` |
+| Error Rate | Stat | `errors_total / requests_total` |
+| Request rate over time | Time series | Prometheus scrape from `api:8000/metrics` |
+
+The dashboard is intended to use Prometheus as the primary metrics source.
+
+### Prometheus
+
+Access the Prometheus expression browser at `http://localhost:9090`.
+
+Scrape target: `api:8000/metrics` — interval 15s, retention 7 days.
+
+### Structured logs
+
+The NGINX gateway emits JSON access logs with the following fields:
+
+```json
+{
+  "time": "2026-03-28T12:00:00+00:00",
+  "method": "POST",
+  "uri": "/predict",
+  "status": 200,
+  "bytes_sent": 98,
+  "api_key": "chan***",
+  "upstream_response_time": "0.041",
+  "request_id": "a1b2c3d4e5f6..."
+}
+```
+
+The `X-Request-ID` header is propagated to both the upstream API and the client response.
 
 ---
 
-## 🧪 Testes
+## CI/CD
 
-Os testes de contrato validam:
+The GitHub Actions pipeline at `.github/workflows/ci.yml` runs on every push and pull request to `main`.
 
-- ✅ `/health` retorna `200` com `status`, `run_id` e `model_loaded`
-- ✅ `/predict` retorna `503`/`500` sem modelo carregado
-- ✅ `/predict` valida texto vazio (`422`) e texto acima de 512 caracteres (`422`)
-- ✅ `/metrics` retorna os três contadores como inteiros
-- ✅ `/metrics` incrementa corretamente após chamadas de `/predict`
-- ✅ `/model` retorna o campo `run_id`
+### Stages
+
+| Stage | Trigger | Description |
+|---|---|---|
+| Lint | All pushes and PRs | `ruff check .` and `black --check .` |
+| Test | After lint passes | `docker compose --profile tests up --abort-on-container-exit` |
+| Build & Publish | Push to `main` only | Builds the Docker image and pushes to GHCR |
+
+### Published image
+
+```
+ghcr.io/moaraland/mlops-challenge:latest
+ghcr.io/moaraland/mlops-challenge:sha-<short-sha>
+```
+
+The image is built with Docker Buildx and layer caching via GitHub Actions cache. The `latest` tag is updated on every successful push to `main`.
+
+### Viewing results
+
+Go to the **Actions** tab in the GitHub repository to see workflow runs, logs, and published package versions.
 
 ---
 
-## 🛠️ Stack Tecnológica
+## Technical Decisions
 
-| Tecnologia | Uso |
-|---|---|
-| **Python 3.11** | Linguagem principal |
-| **TensorFlow 2.20** | Framework de ML (modelo + servindo) |
-| **TensorFlow Text 2.20** | Tokenização |
-| **TensorFlow Datasets** | Download do dataset ParaCrawl |
-| **FastAPI** | Framework da API REST |
-| **Uvicorn** | Servidor ASGI |
-| **Pytest + HTTPX** | Testes automatizados |
-| **Docker / Docker Compose** | Containerização e orquestração |
+For the rationale behind the main implementation choices, tradeoffs, and pending operational decisions, see [`TECH_DECISIONS.md`](TECH_DECISIONS.md).
+
+For a short interview-oriented summary, see [`INTERVIEW_NOTES.md`](INTERVIEW_NOTES.md).
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and adjust values for your environment before running any service.
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Service | Default | Description |
+|---|---|---|---|
+| `NGINX_API_KEY` | gateway | `changeme-secret-key` | API key accepted on protected routes |
+| `GATEWAY_PORT` | gateway | `80` | Host port mapped to the NGINX gateway |
+| `API_PORT` | api | `8000` | Host port mapped to the FastAPI service |
+| `ARTIFACTS_DIR` | api | `artifacts` | Root directory for training artifacts |
+| `DEFAULT_RUN_ID` | api | *(empty)* | Model run_id loaded at API startup |
+| `EPOCHS` | train | `10` | Training epochs |
+| `BATCH_SIZE` | train | `32` | Training batch size |
+| `THRESHOLD` | train | `0.30` | Minimum val_token_accuracy required to pass validation |
+| `TRAIN_RECORDS` | prepare/train | `20000` | Number of training samples |
+| `VAL_RECORDS` | prepare/train | `2000` | Number of validation samples |
+| `OUTPUT_DIR` | prepare | `data/processed` | Output directory for TFRecords |
+| `GIT_SHA` | train | `unknown` | Commit SHA embedded in artifact metadata |
+| `PROMETHEUS_PORT` | prometheus | `9090` | Host port for Prometheus |
+| `GRAFANA_PORT` | grafana | `3000` | Host port for Grafana |
+| `GRAFANA_USER` | grafana | `admin` | Grafana admin username |
+| `GRAFANA_PASSWORD` | grafana | `admin` | Grafana admin password |
+| `N8N_PORT` | n8n | `5678` | Host port for n8n |
+| `N8N_USER` | n8n | `admin` | n8n basic auth username |
+| `N8N_PASSWORD` | n8n | `changeme` | n8n basic auth password |
+| `WEBHOOK_URL` | n8n | `http://localhost:5678` | Base URL n8n uses to generate webhook URLs |
+| `API_URL` | pipeline | `http://localhost:8000` | API URL used by the bash pipeline for the deploy stage |
+
+---
+
+## Tech Stack
+
+| Technology | Version | Role |
+|---|---|---|
+| Python | 3.11 | Primary language |
+| TensorFlow | 2.20 | Model training and serving (SavedModel) |
+| TensorFlow Text | 2.20 | Tokenization |
+| TensorFlow Datasets | latest | ParaCrawl dataset download |
+| FastAPI | latest | Inference REST API |
+| Uvicorn | latest | ASGI server |
+| NGINX | 1.27-alpine | API gateway (auth, rate limiting, structured logging) |
+| Prometheus | 2.51.2 | Metrics collection |
+| Grafana | 10.4.2 | Metrics visualization and dashboards |
+| n8n | 1.40.0 | Workflow orchestration |
+| Docker / Docker Compose | 24.x / 2.x | Containerisation and service profiles |
+| GitHub Actions | — | CI/CD pipeline |
+| GHCR | — | Container registry (`ghcr.io/moaraland/mlops-challenge`) |
+| ruff | latest | Python linter |
+| black | latest | Python formatter |
+| Pytest + HTTPX | latest | API contract tests |

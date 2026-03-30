@@ -7,11 +7,11 @@ class PredictRequest(BaseModel):
     """Corpo da requisição de tradução.
 
     Attributes:
-        text: Texto em português a ser traduzido (entre 1 e 512 caracteres).
+        text: Texto em inglês a ser traduzido (entre 1 e 512 caracteres).
     """
 
     text: str = Field(
-        ..., min_length=1, max_length=512, description="Entrada em português"
+        ..., min_length=1, max_length=512, description="Entrada em inglês"
     )
 
 
@@ -19,7 +19,7 @@ class PredictResponse(BaseModel):
     """Corpo da resposta de tradução.
 
     Attributes:
-        translation: Texto traduzido para o inglês.
+        translation: Texto traduzido para o português.
         run_id: Identificador do modelo utilizado.
         latency_ms: Latência da inferência em milissegundos.
     """
@@ -50,9 +50,15 @@ class ModelResponse(BaseModel):
 
     Attributes:
         run_id: Identificador do modelo atualmente carregado, ou None.
+        git_sha: Commit SHA associado ao artefato servido, se disponível.
+        published_at: Timestamp de publicação do artefato servido, se disponível.
+        artifact_path: Caminho efetivo do SavedModel carregado.
     """
 
     run_id: str | None = None
+    git_sha: str | None = None
+    published_at: str | None = None
+    artifact_path: str | None = None
 
 
 class MetricsResponse(BaseModel):
@@ -87,15 +93,9 @@ class ReloadRequest(BaseModel):
         description="run_id do modelo a carregar.",
     )
     artifacts_dir: str | None = Field(
-        default="/artifacts",
+        default=None,
         description="Diretório alternativo de artefatos (ex.: '/artifacts').",
     )
-
-    # preprocessamento artifacts_dir remove trailing slash para evitar problemas de path
-    def __init__(self, **data):
-        super().__init__(**data)
-        if self.artifacts_dir:
-            self.artifacts_dir = self.artifacts_dir.rstrip("/")
 
 
 class ReloadResponse(BaseModel):
@@ -104,7 +104,13 @@ class ReloadResponse(BaseModel):
     Attributes:
         status: Resultado da operação (ex.: 'reloaded').
         run_id: Identificador do modelo recém-carregado, ou None.
+        git_sha: Commit SHA associado ao artefato servido, se disponível.
+        published_at: Timestamp de publicação do artefato servido, se disponível.
+        artifact_path: Caminho efetivo do SavedModel carregado.
     """
 
     status: str
     run_id: str | None = None
+    git_sha: str | None = None
+    published_at: str | None = None
+    artifact_path: str | None = None

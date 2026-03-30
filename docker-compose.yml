@@ -1,4 +1,21 @@
+# =============================================================================
+# MLOps Challenge — Docker Compose
+# Profiles disponíveis:
+#   prepare    — prepara o dataset
+#   train      — treina o modelo
+#   tests      — executa a suíte de testes
+#   api        — sobe a API de inferência + gateway NGINX
+#   monitoring — Prometheus + Grafana
+#   n8n        — orquestração de workflows
+#   full       — api + monitoring + n8n juntos
+# =============================================================================
+
 services:
+
+  # ---------------------------------------------------------------------------
+  # ML — Pipelines de dados e treinamento
+  # ---------------------------------------------------------------------------
+
   prepare_dataset:
     profiles: ["prepare"]
     build:
@@ -48,8 +65,28 @@ services:
       --max_tokens ${MAX_TOKENS:-64}
       --git_sha ${GIT_SHA:-unknown}"
 
+  tests:
+    profiles: ["tests"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mlops-challenge-ml:local
+    platform: linux/amd64
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    environment:
+      WRAPT_DISABLE_EXTENSIONS: "1"
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -lc "pytest -q"
+
+  # ---------------------------------------------------------------------------
+  # API — Serviço de inferência + Gateway
+  # ---------------------------------------------------------------------------
+
   api:
-    profiles: ["api"]
+    profiles: ["api", "full"]
     build:
       context: .
       dockerfile: Dockerfile
@@ -67,22 +104,95 @@ services:
       - "${API_PORT:-8000}:8000"
     command: >
       bash -lc "uvicorn inference_api.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
-  tests:
-    profiles: ["tests"]
+  gateway:
+    profiles: ["api", "full"]
+    image: nginx:1.27-alpine
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf.template:ro
+    environment:
+      NGINX_API_KEY: ${NGINX_API_KEY:-changeme-secret-key}
+    # envsubst substitutes only $NGINX_API_KEY, leaving NGINX variables
+    # (e.g. ${prefix} in map blocks) untouched, then starts nginx.
+    entrypoint: >
+      /bin/sh -c "envsubst '$$NGINX_API_KEY'
+      < /etc/nginx/nginx.conf.template
+      > /etc/nginx/nginx.conf
+      && nginx -g 'daemon off;'"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Monitoring — Prometheus + Grafana
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    profiles: ["monitoring", "full"]
+    image: prom/prometheus:v2.51.2
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["monitoring", "full"]
+    image: grafana/grafana:10.4.2
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Orchestration — n8n Workflow Automation
+  # ---------------------------------------------------------------------------
+
+  n8n:
+    profiles: ["n8n", "full"]
     build:
       context: .
-      dockerfile: Dockerfile
-    image: mlops-challenge-ml:local
-    platform: linux/amd64
-    working_dir: /workspace
-    volumes:
-      - ./:/workspace
+      dockerfile: n8n/Dockerfile
+    image: mlops-challenge-n8n:local
+    user: "0:0"
+    ports:
+      - "${N8N_PORT:-5678}:5678"
     environment:
-      WRAPT_DISABLE_EXTENSIONS: "1"
-      PYTHONUNBUFFERED: "1"
-    command: >
-      bash -lc "pytest -q"
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678}
+      N8N_LOG_LEVEL: info
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
 
 volumes:
   tfds_cache:
+  grafana_data:
+  n8n_data:

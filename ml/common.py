@@ -63,5 +63,7 @@ class PreparedDatasetInfo:
     train_records: int
     val_records: int
     tokenizer_dir: str
-    pt_vocab_size: int
-    en_vocab_size: int
+    source_language: str
+    target_language: str
+    source_vocab_size: int
+    target_vocab_size: int

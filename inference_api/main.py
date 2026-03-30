@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from inference_api.logging_config import setup_logging
 from inference_api.metrics import metrics
@@ -47,6 +47,20 @@ manager = ModelManager(
 )
 
 
+def _build_model_response() -> ModelResponse:
+    """Serializa o estado atual do modelo carregado."""
+    info = manager.current_model_info()
+    if info is None:
+        return ModelResponse(run_id=manager.current_run_id())
+
+    return ModelResponse(
+        run_id=info.run_id,
+        git_sha=info.git_sha,
+        published_at=info.published_at,
+        artifact_path=info.artifact_path,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Gerencia o ciclo de vida da aplicação FastAPI.
@@ -63,7 +77,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Iniciando a API de inferência...")
     try:
         rid = manager.load()
-        logger.info("Modelo carregado na inicialização: run_id=%s", rid)
+        info = manager.current_model_info()
+        logger.info(
+            "Modelo carregado na inicialização: run_id=%s git_sha=%s artifact_path=%s",
+            rid,
+            info.git_sha if info else None,
+            info.artifact_path if info else None,
+        )
     except Exception:
         logger.warning(
             "Não foi possível carregar o modelo na inicialização; será tentado na primeira requisição."
@@ -77,7 +97,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="Inference API",
     version="1.1.0",
-    description="API de tradução PT→EN baseada em SavedModel TensorFlow.",
+    description="API de tradução EN→PT baseada em SavedModel TensorFlow.",
     lifespan=lifespan,
 )
 
@@ -130,16 +150,21 @@ def model() -> ModelResponse:
     Returns:
         ModelResponse com o campo run_id.
     """
-    return ModelResponse(run_id=manager.current_run_id())
+    return _build_model_response()
 
 
-@app.get("/metrics", response_model=MetricsResponse)
-def get_metrics() -> MetricsResponse:
-    """Retorna os contadores de métricas da aplicação.
+@app.get("/metrics")
+def get_metrics() -> Response:
+    """Expõe métricas no formato de scrape do Prometheus."""
+    return Response(
+        content=metrics.render_prometheus(),
+        media_type=metrics.content_type,
+    )
 
-    Returns:
-        MetricsResponse com requests_total, errors_total e translations_total.
-    """
+
+@app.get("/metrics/json", response_model=MetricsResponse)
+def get_metrics_json() -> MetricsResponse:
+    """Retorna os contadores de métricas da aplicação em JSON."""
     return MetricsResponse(**metrics.to_dict())
 
 
@@ -154,11 +179,10 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         ReloadResponse com status e run_id do modelo recém-carregado.
     """
     try:
-
-        effective_dir = req.artifacts_dir or str(manager.artifacts_dir)
         target_manager = (
             ModelManager(
-                artifacts_dir=effective_dir, default_run_id=manager.default_run_id
+                artifacts_dir=req.artifacts_dir,
+                default_run_id=manager.default_run_id,
             )
             if req.artifacts_dir
             else manager
@@ -166,12 +190,27 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
         rid = target_manager.load(run_id=req.run_id or None)
 
         if req.artifacts_dir:
-            with manager._lock:
-                manager._translator = target_manager._translator
-                manager._run_id = target_manager._run_id
+            manager.adopt_loaded_state(target_manager)
 
-        logger.info("Modelo recarregado via /reload: run_id=%s", rid)
-        return ReloadResponse(status="reloaded", run_id=rid)
+        info = (
+            manager.current_model_info()
+            if req.artifacts_dir
+            else target_manager.current_model_info()
+        )
+        logger.info(
+            "Modelo recarregado via /reload: run_id=%s git_sha=%s published_at=%s artifact_path=%s",
+            rid,
+            info.git_sha if info else None,
+            info.published_at if info else None,
+            info.artifact_path if info else None,
+        )
+        return ReloadResponse(
+            status="reloaded",
+            run_id=rid,
+            git_sha=info.git_sha if info else None,
+            published_at=info.published_at if info else None,
+            artifact_path=info.artifact_path if info else None,
+        )
     except Exception as exc:
         logger.exception("Falha ao recarregar o modelo via /reload")
 
@@ -180,7 +219,7 @@ def reload_model(req: ReloadRequest) -> ReloadResponse:
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> PredictResponse:
-    """Traduz um texto de português para inglês.
+    """Traduz um texto de inglês para português.
 
     Args:
         req: PredictRequest contendo o texto a ser traduzido.

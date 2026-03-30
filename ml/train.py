@@ -31,13 +31,13 @@ from ml.model import Transformer, TransformerConfig, WarmupSchedule
 
 def _parse_example(example_proto: tf.Tensor):
     feature_spec = {
-        "pt": tf.io.VarLenFeature(tf.int64),
-        "en": tf.io.VarLenFeature(tf.int64),
+        "source": tf.io.VarLenFeature(tf.int64),
+        "target": tf.io.VarLenFeature(tf.int64),
     }
     parsed = tf.io.parse_single_example(example_proto, feature_spec)
-    pt = tf.sparse.to_dense(parsed["pt"])
-    en = tf.sparse.to_dense(parsed["en"])
-    return pt, en
+    source = tf.sparse.to_dense(parsed["source"])
+    target = tf.sparse.to_dense(parsed["target"])
+    return source, target
 
 
 def build_training_dataset(
@@ -53,12 +53,12 @@ def build_training_dataset(
         buffer_size=8 * 1024 * 1024,  # 8MB (ajuste conforme disco/rede)
     ).map(_parse_example, num_parallel_calls=tf.data.AUTOTUNE)
 
-    def trim_and_shift(pt, en):
-        pt = pt[:max_tokens]
-        en = en[: (max_tokens + 1)]
-        en_in = en[:-1]
-        en_out = en[1:]
-        return (pt, en_in), en_out
+    def trim_and_shift(source, target):
+        source = source[:max_tokens]
+        target = target[: (max_tokens + 1)]
+        target_in = target[:-1]
+        target_out = target[1:]
+        return (source, target_in), target_out
 
     ds = ds.map(trim_and_shift, num_parallel_calls=tf.data.AUTOTUNE)
 
@@ -113,11 +113,11 @@ class Translator(tf.Module):
         if len(sentence.shape) == 0:
             sentence = sentence[tf.newaxis]
 
-        encoder_input = self.tokenizers.pt.tokenize(sentence)[
+        encoder_input = self.tokenizers.en.tokenize(sentence)[
             :, : self.max_tokens
         ].to_tensor()
 
-        start_end = self.tokenizers.en.tokenize([""])[0]
+        start_end = self.tokenizers.pt.tokenize([""])[0]
         start = start_end[0][tf.newaxis]
         end = start_end[1][tf.newaxis]
 
@@ -134,7 +134,7 @@ class Translator(tf.Module):
                 break
 
         out_tokens = tf.transpose(output.stack())
-        text = self.tokenizers.en.detokenize(out_tokens)[0]
+        text = self.tokenizers.pt.detokenize(out_tokens)[0]
         return text
 
 
@@ -227,9 +227,11 @@ def main() -> None:
     train_ds = train_ds.repeat()
     val_ds_fit = val_ds.repeat()
 
+    # TransformerConfig ainda usa nomes internos legados (pt/en), mas o
+    # pipeline foi alinhado para EN -> PT: encoder=source(en), decoder=target(pt).
     cfg = TransformerConfig(
-        pt_vocab_size=prepared.pt_vocab_size,
-        en_vocab_size=prepared.en_vocab_size,
+        pt_vocab_size=prepared.source_vocab_size,
+        en_vocab_size=prepared.target_vocab_size,
         max_tokens=args.max_tokens,
         num_layers=args.num_layers,
         d_model=args.d_model,

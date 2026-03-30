@@ -26,10 +26,10 @@ def _int64_feature(values: Iterable[int]) -> tf.train.Feature:
     return tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
 
 
-def _serialize_example(pt_tokens: tf.Tensor, en_tokens: tf.Tensor) -> bytes:
+def _serialize_example(source_tokens: tf.Tensor, target_tokens: tf.Tensor) -> bytes:
     feature = {
-        "pt": _int64_feature(pt_tokens.numpy().tolist()),
-        "en": _int64_feature(en_tokens.numpy().tolist()),
+        "source": _int64_feature(source_tokens.numpy().tolist()),
+        "target": _int64_feature(target_tokens.numpy().tolist()),
     }
     example = tf.train.Example(features=tf.train.Features(feature=feature))
     return example.SerializeToString()
@@ -37,13 +37,13 @@ def _serialize_example(pt_tokens: tf.Tensor, en_tokens: tf.Tensor) -> bytes:
 
 def _parse_example(example_proto: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     feature_spec = {
-        "pt": tf.io.VarLenFeature(tf.int64),
-        "en": tf.io.VarLenFeature(tf.int64),
+        "source": tf.io.VarLenFeature(tf.int64),
+        "target": tf.io.VarLenFeature(tf.int64),
     }
     parsed = tf.io.parse_single_example(example_proto, feature_spec)
-    pt = tf.sparse.to_dense(parsed["pt"])
-    en = tf.sparse.to_dense(parsed["en"])
-    return pt, en
+    source = tf.sparse.to_dense(parsed["source"])
+    target = tf.sparse.to_dense(parsed["target"])
+    return source, target
 
 
 def write_tfrecord(
@@ -56,18 +56,18 @@ def write_tfrecord(
 ) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def tokenize_batch(pt, en):
-        pt_tok = tokenizers.pt.tokenize(pt)[:, :max_tokens]
-        en_tok = tokenizers.en.tokenize(en)[:, : (max_tokens + 1)]
-        return pt_tok, en_tok
+    def tokenize_batch(en, pt):
+        source_tok = tokenizers.en.tokenize(en)[:, :max_tokens]
+        target_tok = tokenizers.pt.tokenize(pt)[:, : (max_tokens + 1)]
+        return source_tok, target_tok
 
     ds = ds_text.batch(batch_tokenize).map(
         tokenize_batch, num_parallel_calls=tf.data.AUTOTUNE
     )
     ds = ds.unbatch()
 
-    def not_empty(pt_tok, en_tok):
-        return tf.logical_and(tf.size(pt_tok) > 2, tf.size(en_tok) > 2)
+    def not_empty(source_tok, target_tok):
+        return tf.logical_and(tf.size(source_tok) > 2, tf.size(target_tok) > 2)
 
     ds = ds.filter(not_empty)
     if max_records is not None:
@@ -75,8 +75,8 @@ def write_tfrecord(
 
     count = 0
     with tf.io.TFRecordWriter(str(output_path)) as w:
-        for pt_tok, en_tok in ds:
-            w.write(_serialize_example(pt_tok, en_tok))
+        for source_tok, target_tok in ds:
+            w.write(_serialize_example(source_tok, target_tok))
             count += 1
     return count
 
@@ -119,8 +119,10 @@ def prepare_dataset(
         train_records=n_train,
         val_records=n_val,
         tokenizer_dir=str(tokenizers_dir / "ted_hrlr_translate_pt_en_converter"),
-        pt_vocab_size=vocab_size(tokenizers.pt),
-        en_vocab_size=vocab_size(tokenizers.en),
+        source_language="en",
+        target_language="pt",
+        source_vocab_size=vocab_size(tokenizers.en),
+        target_vocab_size=vocab_size(tokenizers.pt),
     )
     write_json(output_dir / "prepared_dataset.json", asdict(info))
     return info
