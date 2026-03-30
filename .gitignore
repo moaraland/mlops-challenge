@@ -1,3 +1,8 @@
 artifacts
 data
 .idea
+__pycache__/
+*.py[cod]
+*.tmp.json
+.env
+.claude/

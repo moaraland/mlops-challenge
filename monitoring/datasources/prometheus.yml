@@ -12,12 +12,3 @@ datasources:
       timeInterval: "15s"
       httpMethod: POST
 
-  # Infinity: reads arbitrary JSON from HTTP URLs.
-  # Used to display metrics from /metrics while it returns custom JSON
-  # instead of the Prometheus exposition format.
-  - name: Infinity
-    type: yesoreyeram-infinity-datasource
-    uid: infinity
-    access: proxy
-    isDefault: false
-    editable: false

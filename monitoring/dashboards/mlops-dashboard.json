@@ -1,31 +1,21 @@
 {
   "uid": "mlops-main",
   "title": "MLOps Challenge — Inference API",
-  "description": "Monitoramento da Inference API de tradução PT→EN",
+  "description": "Monitoramento da Inference API de tradução EN→PT",
   "tags": ["mlops", "inference", "monitoring"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "graphTooltip": 1,
   "panels": [
     {
-      "id": 1,
-      "type": "text",
-      "title": "Status do Monitoramento",
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
-      "options": {
-        "mode": "markdown",
-        "content": "## Nota sobre coleta de métricas\n\nO endpoint `/metrics` da Inference API retorna **JSON customizado** (`application/json`), não o formato de exposição do Prometheus (`text/plain`).\n\n- **Painéis de valor instantâneo**: usam o datasource **Infinity**, que lê o JSON diretamente de `http://api:8000/metrics`.\n- **Time series**: requer que o Prometheus consiga fazer scrape. Para habilitar, adicione `prometheus_client` à API e substitua o endpoint `/metrics` pelo formato de exposição padrão."
-      }
-    },
-    {
       "id": 2,
       "type": "stat",
       "title": "Total Requests",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 4 },
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -46,13 +36,9 @@
       "targets": [
         {
           "refId": "A",
-          "type": "json",
-          "url": "http://api:8000/metrics",
-          "source": "url",
-          "format": "dataframe",
-          "columns": [
-            { "selector": "requests_total", "text": "Requests", "type": "number" }
-          ]
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "requests_total",
+          "legendFormat": "requests"
         }
       ]
     },
@@ -60,8 +46,8 @@
       "id": 3,
       "type": "stat",
       "title": "Total Translations",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 4 },
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -82,13 +68,9 @@
       "targets": [
         {
           "refId": "A",
-          "type": "json",
-          "url": "http://api:8000/metrics",
-          "source": "url",
-          "format": "dataframe",
-          "columns": [
-            { "selector": "translations_total", "text": "Translations", "type": "number" }
-          ]
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "translations_total",
+          "legendFormat": "translations"
         }
       ]
     },
@@ -96,8 +78,8 @@
       "id": 4,
       "type": "stat",
       "title": "Total Errors",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 4 },
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -122,13 +104,9 @@
       "targets": [
         {
           "refId": "A",
-          "type": "json",
-          "url": "http://api:8000/metrics",
-          "source": "url",
-          "format": "dataframe",
-          "columns": [
-            { "selector": "errors_total", "text": "Errors", "type": "number" }
-          ]
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "errors_total",
+          "legendFormat": "errors"
         }
       ]
     },
@@ -136,8 +114,8 @@
       "id": 5,
       "type": "stat",
       "title": "Error Rate %",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 4 },
-      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "infinity" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -163,36 +141,9 @@
       "targets": [
         {
           "refId": "A",
-          "type": "json",
-          "url": "http://api:8000/metrics",
-          "source": "url",
-          "format": "dataframe",
-          "columns": [
-            { "selector": "errors_total",   "text": "errors_total",   "type": "number" },
-            { "selector": "requests_total", "text": "requests_total", "type": "number" }
-          ]
-        }
-      ],
-      "transformations": [
-        {
-          "id": "calculateField",
-          "options": {
-            "alias": "error_rate",
-            "mode": "binary",
-            "binary": { "left": "errors_total", "right": "requests_total", "operator": "/" }
-          }
-        },
-        {
-          "id": "calculateField",
-          "options": {
-            "alias": "Error Rate %",
-            "mode": "binary",
-            "binary": { "left": "error_rate", "right": "100", "operator": "*" }
-          }
-        },
-        {
-          "id": "organize",
-          "options": { "excludeByName": { "errors_total": true, "requests_total": true, "error_rate": true } }
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "errors_total / clamp_min(requests_total, 1) * 100",
+          "legendFormat": "error rate %"
         }
       ]
     },
@@ -200,8 +151,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Requests Over Time",
-      "description": "Rate de requisições por minuto. Requer Prometheus scrape funcional (ver nota acima).",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
@@ -227,7 +177,47 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "rate(requests_total{instance=~\"$instance\"}[1m])",
-          "legendFormat": "requests/min — {{instance}}"
+          "legendFormat": "requests/s — {{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(errors_total{instance=~\"$instance\"}[1m])",
+          "legendFormat": "errors/s — {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Translations Over Time",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "single", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(translations_total{instance=~\"$instance\"}[1m])",
+          "legendFormat": "translations/s — {{instance}}"
         }
       ]
     }

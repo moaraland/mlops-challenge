@@ -30,5 +30,3 @@ RUN if [ ! -x /usr/bin/docker ]; then \
 COPY n8n/docker-wrapper.sh /usr/local/bin/docker
 
 RUN chmod +x /usr/local/bin/docker
-
-USER root
