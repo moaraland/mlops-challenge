@@ -5,5 +5,3 @@ __pycache__/
 *.py[cod]
 *.tmp.json
 .env
-.claude/
-entregaveis/preparacao_conversa_tecnica.md
