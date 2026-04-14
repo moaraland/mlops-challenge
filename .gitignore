@@ -6,3 +6,4 @@ __pycache__/
 *.tmp.json
 .env
 .claude/
+entregaveis/preparacao_conversa_tecnica.md
