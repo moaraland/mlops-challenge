@@ -5,3 +5,6 @@ __pycache__/
 *.py[cod]
 *.tmp.json
 .env
+.claude/
+screenshots/
+entregaveis/preparacao_*.md
